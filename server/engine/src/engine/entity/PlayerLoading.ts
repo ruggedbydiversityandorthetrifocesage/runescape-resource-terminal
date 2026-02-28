@@ -49,6 +49,14 @@ export class PlayerLoading {
             player.stats[PlayerStat.HITPOINTS] = getExpByLevel(10);
             player.baseLevels[PlayerStat.HITPOINTS] = 10;
             player.levels[PlayerStat.HITPOINTS] = 10;
+
+            // PILL WOODCUTTER: spawn in Draynor forest with bronze axe
+            player.x = 3097;
+            player.z = 3277;
+            player.level = 0;
+            const startInv = player.getInventory(93);
+            if (startInv) { startInv.set(0, { id: 1351, count: 1 }); }
+
             return player;
         }
 

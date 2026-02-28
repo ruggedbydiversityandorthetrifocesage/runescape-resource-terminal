@@ -8,6 +8,7 @@ import World from '#/engine/World.js';
 import ClientGameMessageHandler from '#/network/game/client/ClientGameMessageHandler.js';
 import OpNpc from '#/network/game/client/model/OpNpc.js';
 import UnsetMapFlag from '#/network/game/server/model/UnsetMapFlag.js';
+import { PILL_MERCHANT_NPC_IDS, handlePillMerchant } from '#/engine/pill/PillMerchant.js';
 
 export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
     handle(message: OpNpc, player: NetworkPlayer): boolean {
@@ -29,6 +30,11 @@ export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
             player.write(new UnsetMapFlag());
             player.clearPendingAction();
             return false;
+        }
+
+        if (PILL_MERCHANT_NPC_IDS.has(npc.type)) {
+            handlePillMerchant(player, npc);
+            return true;
         }
 
         const npcType = NpcType.get(npc.type);

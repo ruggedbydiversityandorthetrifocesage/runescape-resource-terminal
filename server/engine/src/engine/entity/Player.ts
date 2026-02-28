@@ -1,6 +1,7 @@
 import 'dotenv/config';
 
 import { PlayerInfoProt, Visibility } from '@2004scape/rsbuf';
+import { checkPlayerBoundary } from '#/engine/pill/BoundaryCheck.js';
 import { CollisionType, CollisionFlag } from '@2004scape/rsmod-pathfinder';
 
 import Component from '#/cache/config/Component.js';
@@ -679,6 +680,8 @@ export default class Player extends PathingEntity {
 
         if (this.stepsTaken > 0) {
             this.lastMovement = World.currentTick + 1;
+            // PILL: boundary check after each step
+            checkPlayerBoundary(this);
         }
 
         return this.stepsTaken > 0;

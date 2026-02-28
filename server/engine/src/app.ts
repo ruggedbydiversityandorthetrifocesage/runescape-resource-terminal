@@ -37,6 +37,13 @@ if (Environment.EASY_STARTUP) {
     createWorker('./src/logger.ts');
 }
 
+// RST minter startup check
+if (process.env.RST_MINTER_WIF) {
+    console.log('[RST] ✅ RST_MINTER_WIF loaded — server-side auto-mint ENABLED');
+} else {
+    console.log('[RST] ⚠️  RST_MINTER_WIF not set — falling back to browser signing');
+}
+
 await World.start();
 
 const tcpServer = new TcpServer();

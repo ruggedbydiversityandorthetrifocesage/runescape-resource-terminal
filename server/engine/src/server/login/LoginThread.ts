@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { parentPort } from 'worker_threads';
 
+import bcrypt from 'bcrypt';
 import { LoginClient } from '#/server/login/LoginClient.js';
 import Environment from '#/util/Environment.js';
 
@@ -75,6 +76,32 @@ async function handleRequests(parentPort: ParentPort, msg: any) {
                 const profile = Environment.NODE_PROFILE;
                 if (!fs.existsSync(`data/players/${profile}`)) {
                     fs.mkdirSync(`data/players/${profile}`, { recursive: true });
+                }
+
+                // Password security: .pwd file stores bcrypt hash alongside .sav
+                // First login sets the password; subsequent logins must match it.
+                const pwdPath = `data/players/${profile}/${username}.pwd`;
+                if (fs.existsSync(pwdPath)) {
+                    const stored = fs.readFileSync(pwdPath, 'utf-8').trim();
+                    const match = await bcrypt.compare(password, stored);
+                    if (!match) {
+                        parentPort.postMessage({
+                            type: 'player_login',
+                            socket,
+                            username,
+                            lowMemory,
+                            reconnecting,
+                            reply: 1, // Invalid username or password
+                            staffmodlevel,
+                            save: null,
+                            account_id: 0,
+                            members: Environment.NODE_MEMBERS
+                        });
+                        return;
+                    }
+                } else {
+                    // No password set yet — this login sets it
+                    fs.writeFileSync(pwdPath, bcrypt.hashSync(password, 10));
                 }
 
                 if (!fs.existsSync(`data/players/${profile}/${username}.sav`)) {
