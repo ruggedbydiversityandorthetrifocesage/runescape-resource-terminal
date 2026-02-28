@@ -58,6 +58,7 @@ import ScriptRunner from '#/engine/script/ScriptRunner.js';
 import ScriptState from '#/engine/script/ScriptState.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import { WorldStat } from '#/engine/WorldStat.js';
+import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from '#/engine/pill/TutorialTracker.js';
 import Zone from '#/engine/zone/Zone.js';
 import Isaac from '#/io/Isaac.js';
 import Packet from '#/io/Packet.js';
@@ -763,6 +764,22 @@ class World {
                 if ((player.masks & PlayerInfoProt.EXACT_MOVE) == 0) {
                     player.validateDistanceWalked();
                 }
+
+                // Tutorial step 0 → 1: detect first resource in inventory
+                if (getTutorialStep(player.username) === 0) {
+                    const inv = player.getInventory(93);
+                    if (inv) {
+                        for (let slot = 0; slot < inv.capacity; slot++) {
+                            const item = inv.get(slot);
+                            if (item && RESOURCE_ITEM_IDS.has(item.id)) {
+                                setTutorialStep(player.username, 1);
+                                player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
+                                player.messageGame('Great job! Now head to the Lumbridge General Store and sell your logs!');
+                                break;
+                            }
+                        }
+                    }
+                }
             } catch (err) {
                 console.error(err);
                 console.warn(`[LOGOUT DEBUG] Server exception during player tick for ${player.username} - forcing logout`);
@@ -999,6 +1016,17 @@ class World {
 
             this.gameMap.getZone(player.x, player.z, player.level).enter(player);
             player.onLogin();
+
+            // Tutorial hint arrows for new players
+            const tStep = getTutorialStep(player.username);
+            if (tStep === 0) {
+                // Brand new player: point to Draynor tree cluster + welcome message
+                player.hintTile(2, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, 0);
+                player.messageGame('Welcome! Follow the arrow on your map to cut some logs!');
+            } else if (tStep === 1) {
+                // Has logs: point to Lumbridge General Store
+                player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
+            }
 
             if (this.shutdownTick != -1) {
                 player.write(new UpdateRebootTimer(this.shutdownTick - this.currentTick));

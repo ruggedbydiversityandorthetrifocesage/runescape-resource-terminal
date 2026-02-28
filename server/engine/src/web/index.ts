@@ -127,6 +127,8 @@ async function checkBalance() {
   } catch(e) { showStatus('Error: ' + e.message, 'error'); }
 }
 
+function sha256PureJSClaim(data){const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];const H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];const msg=data instanceof Uint8Array?data:new Uint8Array(data);const len=msg.length,bitLen=len*8;const padLen=len%64<56?56-(len%64):120-(len%64);const padded=new Uint8Array(len+padLen+8);padded.set(msg);padded[len]=0x80;const dv=new DataView(padded.buffer);dv.setUint32(padded.length-4,bitLen>>>0,false);dv.setUint32(padded.length-8,Math.floor(bitLen/0x100000000),false);const h=H.slice();const rotr=(x,n)=>(x>>>n)|(x<<(32-n));for(let i=0;i<padded.length;i+=64){const w=new Array(64);for(let j=0;j<16;j++)w[j]=dv.getUint32(i+j*4,false);for(let j=16;j<64;j++){const s0=rotr(w[j-15],7)^rotr(w[j-15],18)^(w[j-15]>>>3);const s1=rotr(w[j-2],17)^rotr(w[j-2],19)^(w[j-2]>>>10);w[j]=(w[j-16]+s0+w[j-7]+s1)>>>0;}let[a,b,c,d,e,f,g,hh]=h;for(let j=0;j<64;j++){const S1=rotr(e,6)^rotr(e,11)^rotr(e,25);const ch=(e&f)^(~e&g);const t1=(hh+S1+ch+K[j]+w[j])>>>0;const S0=rotr(a,2)^rotr(a,13)^rotr(a,22);const maj=(a&b)^(a&c)^(b&c);const t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;}h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+d)>>>0;h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;}return h.map(v=>v.toString(16).padStart(8,'0')).join('');}
+async function sha256HexClaim(data){const bytes=typeof data==='string'?hexToBytes(data):data;if(typeof crypto!=='undefined'&&crypto.subtle){const buf=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');}return sha256PureJSClaim(bytes);}
 async function connectAndClaim() {
   const username = document.getElementById('username').value.trim().toLowerCase();
   const gpAmount = parseInt(document.getElementById('rstAmount').textContent);
@@ -145,8 +147,7 @@ async function connectAndClaim() {
       try {
         const key = await pClaim.getMLDSAPublicKey();
         const keyHex = typeof key === 'string' ? key : Array.from(key).map(b => b.toString(16).padStart(2,'0')).join('');
-        const hashBuf = await crypto.subtle.digest('SHA-256', hexToBytes(keyHex));
-        recipientHashClaim = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+        recipientHashClaim = await sha256HexClaim(keyHex);
       } catch(e) { console.warn('[RST] getMLDSAPublicKey failed on claim page:', e); }
     }
     if (!recipientHashClaim) { showStatus('Could not resolve recipient address. Make sure OP_WALLET is connected.', 'error'); return; }
@@ -372,12 +373,37 @@ button.conn-btn:hover { background: #243300; }
 .modal-status.success { color: #44cc44; }
 .modal-status.error { color: #ff4444; }
 .modal-status.info { color: #5555ff; }
+/* How to play modal */
+.htp-modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 200; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 24px 12px; }
+.htp-modal-bg.show { display: flex; }
+.htp-box { background: #0a0a0a; border: 2px solid #f0c030; padding: 28px 32px; max-width: 560px; width: 100%; border-radius: 4px; position: relative; }
+.htp-box h1 { color: #f0c030; font-size: 1em; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+.htp-box .htp-sub { color: #555; font-size: 0.72em; margin-bottom: 20px; border-bottom: 1px solid #1e1600; padding-bottom: 12px; }
+.htp-section { margin-bottom: 16px; }
+.htp-section h3 { color: #f0c030; font-size: 0.72em; letter-spacing: 1px; margin-bottom: 6px; }
+.htp-section p, .htp-section li { color: #c0a060; font-size: 0.75em; line-height: 1.7; }
+.htp-section ul { padding-left: 14px; }
+.htp-section .htp-addr { color: #44cc44; font-size: 0.68em; word-break: break-all; background: #0d1a0d; padding: 6px 8px; border-radius: 3px; display: block; margin-top: 4px; border: 1px solid #1a3a1a; }
+.htp-section .htp-step { display: flex; gap: 10px; margin-bottom: 8px; }
+.htp-section .htp-num { color: #f7931a; font-weight: bold; flex-shrink: 0; font-size: 0.75em; }
+.htp-section .htp-desc { color: #c0a060; font-size: 0.75em; line-height: 1.6; }
+.htp-rates { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 8px; }
+.htp-rate { background: #111; border: 1px solid #2a2000; border-radius: 3px; padding: 8px; text-align: center; }
+.htp-rate .r-gp { color: #888; font-size: 0.68em; }
+.htp-rate .r-rst { color: #f0c030; font-size: 0.82em; font-weight: bold; }
+.htp-close { position: absolute; top: 14px; right: 16px; background: none; border: 1px solid #2a2000; color: #555; padding: 4px 10px; font-family: monospace; font-size: 0.72em; cursor: pointer; border-radius: 3px; }
+.htp-close:hover { color: #888; border-color: #555; }
+.htp-btn { width: 100%; background: #1a1200; border: 1px solid #f0c030; color: #f0c030; padding: 7px; font-family: monospace; font-size: 0.72em; cursor: pointer; border-radius: 3px; margin-bottom: 6px; text-align: center; }
+.htp-btn:hover { background: #2a2000; }
 </style>
 </head>
 <body>
 <header>
   <span class="logo">&#x26CF; RUNESCAPE RESOURCE TERMINAL</span>
-  <span id="walletStatus" class="wallet-status">No wallet connected — connect in the sidebar</span>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button onclick="document.getElementById('htpModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x2753; HOW TO PLAY</button>
+    <span id="walletStatus" class="wallet-status">No wallet connected — connect in the sidebar</span>
+  </div>
 </header>
 <div class="main">
   <div class="game-wrap">
@@ -386,9 +412,9 @@ button.conn-btn:hover { background: #243300; }
   <div class="sidebar">
     <!-- Wallet connect -->
     <div class="connect-area" id="connectSection">
-      <h3 style="color:#f0c030;font-size:0.65em;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Connect Wallet</h3>
-      <p>Link your OP_WALLET to earn $RST tokens when you sell logs or ores to the General Store.</p>
-      <input class="rs-input" id="usernameInput" placeholder="RS username">
+      <h3 style="color:#f0c030;font-size:0.65em;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Connect Wallet</h3>
+      <p style="font-size:0.72em;color:#888;line-height:1.5;margin-bottom:8px;">Enter your username here <strong style="color:#c0a060">first</strong>, then connect. After connecting, enter the same username in the game — your first password becomes permanent.</p>
+      <input class="rs-input" id="usernameInput" placeholder="Enter username first">
       <button class="conn-btn" onclick="connectWallet()">&#x26BF; CONNECT OP_WALLET</button>
     </div>
     <!-- Stats (after connect) -->
@@ -407,6 +433,10 @@ button.conn-btn:hover { background: #243300; }
       <h3>Most GP Converted</h3>
       <div id="leaderboard"><div style="color:#333;font-size:0.72em;text-align:center;padding:8px;">Loading...</div></div>
     </div>
+    <!-- How to Play button -->
+    <div style="padding: 10px 12px; border-bottom: 1px solid #1e1600;">
+      <button class="htp-btn" onclick="document.getElementById('htpModal').classList.add('show')">&#x2753; HOW TO PLAY</button>
+    </div>
     <!-- Links -->
     <div class="s-links">
       <a href="/hiscores">&#x2197; Hiscores</a>
@@ -414,6 +444,45 @@ button.conn-btn:hover { background: #243300; }
       <a href="/rst">&#x2197; Wallet Setup</a>
       <a href="/rst/claim">&#x2197; Claim RST</a>
     </div>
+  </div>
+</div>
+<!-- How To Play Modal -->
+<div class="htp-modal-bg" id="htpModal">
+  <div class="htp-box">
+    <button class="htp-close" onclick="document.getElementById('htpModal').classList.remove('show')">&#x2715; CLOSE</button>
+    <h1>&#x26CF; RST &mdash; Runescape Resource Terminal</h1>
+    <div class="htp-sub">How to Play</div>
+    <div class="htp-section">
+      <h3>BEFORE YOU START &mdash; Requirements</h3>
+      <ul>
+        <li>OP_WALLET browser extension installed</li>
+        <li>Testnet BTC (tBTC) in your wallet &mdash; get it free at <strong style="color:#44cc44">faucet.opnet.org</strong></li>
+      </ul>
+    </div>
+    <div class="htp-section">
+      <h3>IMPORT THE RST TOKEN INTO OP_WALLET</h3>
+      <p>Open OP_WALLET &rarr; Tokens &rarr; Import Token &rarr; paste this address:</p>
+      <span class="htp-addr">0xfdcb53e48b0330e2714efa4c5de48f29893d89023ee661d94a15b2948138a77f</span>
+    </div>
+    <div class="htp-section">
+      <h3>STEPS</h3>
+      <div class="htp-step"><span class="htp-num">1.</span><span class="htp-desc"><strong style="color:#f0c030">Go to the game</strong> &mdash; You&apos;re already here!</span></div>
+      <div class="htp-step"><span class="htp-num">2.</span><span class="htp-desc"><strong style="color:#f0c030">Enter a username &amp; connect</strong> &mdash; On the right sidebar, type your desired username into the box, then click CONNECT OP_WALLET. It will silently sync your wallet to that username &mdash; no popup needed.</span></div>
+      <div class="htp-step"><span class="htp-num">3.</span><span class="htp-desc"><strong style="color:#f0c030">Create your in-game account</strong> &mdash; In the game client, enter that same username and choose a password. That password is permanent &mdash; it locks your account forever.</span></div>
+      <div class="htp-step"><span class="htp-num" style="color:#888">&#x2139;</span><span class="htp-desc" style="color:#666">Forgot your password or username? You can always create a new account with the same wallet address.</span></div>
+      <div class="htp-step"><span class="htp-num">4.</span><span class="htp-desc"><strong style="color:#f0c030">Chop some trees</strong> &mdash; Walk to the trees near spawn and click one. Chop until you have 2&ndash;3 logs.</span></div>
+      <div class="htp-step"><span class="htp-num">5.</span><span class="htp-desc"><strong style="color:#f0c030">Sell at the General Store</strong> &mdash; Walk to the nearby General Store NPC and click them. Your logs convert to GP automatically.</span></div>
+      <div class="htp-step"><span class="htp-num">6.</span><span class="htp-desc"><strong style="color:#f0c030">Sign &amp; Mint RST</strong> &mdash; A mint button appears in the sidebar. Click SIGN &amp; MINT WITH OP_WALLET, approve in OP_WALLET. RST lands in your wallet on Bitcoin L1.</span></div>
+    </div>
+    <div class="htp-section">
+      <h3>CONVERSION RATES</h3>
+      <div class="htp-rates">
+        <div class="htp-rate"><div class="r-gp">100 GP</div><div class="r-rst">0.01 RST</div></div>
+        <div class="htp-rate"><div class="r-gp">1,000 GP</div><div class="r-rst">0.1 RST</div></div>
+        <div class="htp-rate"><div class="r-gp">10,000 GP</div><div class="r-rst">1 RST</div></div>
+      </div>
+    </div>
+    <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">The more you play, the more you mint. Keep chopping. &#x1F333;&#x26CF;&#xFE0F;</p>
   </div>
 </div>
 <!-- Mint Modal -->
@@ -437,11 +506,37 @@ let mldsaHash = null; // 32-byte SHA256 of MLDSA pubkey — the real OPNet recip
 let lastMintTime = 0;   // timestamp of last successful mint (cooldown tracking)
 let walletRefreshInterval = null;
 
+function sha256PureJS(data) {
+  const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const msg=data instanceof Uint8Array?data:new Uint8Array(data);
+  const len=msg.length,bitLen=len*8;
+  const padLen=len%64<56?56-(len%64):120-(len%64);
+  const padded=new Uint8Array(len+padLen+8);
+  padded.set(msg);padded[len]=0x80;
+  const dv=new DataView(padded.buffer);
+  dv.setUint32(padded.length-4,bitLen>>>0,false);
+  dv.setUint32(padded.length-8,Math.floor(bitLen/0x100000000),false);
+  const h=H.slice();
+  const rotr=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let i=0;i<padded.length;i+=64){
+    const w=new Array(64);
+    for(let j=0;j<16;j++)w[j]=dv.getUint32(i+j*4,false);
+    for(let j=16;j<64;j++){const s0=rotr(w[j-15],7)^rotr(w[j-15],18)^(w[j-15]>>>3);const s1=rotr(w[j-2],17)^rotr(w[j-2],19)^(w[j-2]>>>10);w[j]=(w[j-16]+s0+w[j-7]+s1)>>>0;}
+    let[a,b,c,d,e,f,g,hh]=h;
+    for(let j=0;j<64;j++){const S1=rotr(e,6)^rotr(e,11)^rotr(e,25);const ch=(e&f)^(~e&g);const t1=(hh+S1+ch+K[j]+w[j])>>>0;const S0=rotr(a,2)^rotr(a,13)^rotr(a,22);const maj=(a&b)^(a&c)^(b&c);const t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;}
+    h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+d)>>>0;h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;
+  }
+  return h.map(v=>v.toString(16).padStart(8,'0')).join('');
+}
 async function sha256Hex(data) {
   // data = hex string or Uint8Array
   const bytes = typeof data === 'string' ? hexToBytes(data) : data;
-  const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  return sha256PureJS(bytes);
 }
 
 function bech32mAddrToHex(addr) {

@@ -3,6 +3,7 @@ import Npc from '#/engine/entity/Npc.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { mintRST, isMintConfigured } from './RSTMinter.js';
+import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from './TutorialTracker.js';
 
 // ============================================================
 // RST — Runescape Resource Terminal
@@ -134,6 +135,12 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     }
 
     if (remove.length === 0) {
+        // Tutorial: if new player has no sellable items, re-point them to the trees
+        const tStepEmpty = getTutorialStep(player.username);
+        if (tStepEmpty === 0 || tStepEmpty === 1) {
+            player.hintTile(2, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, 0);
+            setTutorialStep(player.username, 0);
+        }
         player.messageGame('Runescape Resource Terminal: Bring logs or ores to convert!');
         player.messageGame('10,000 GP = 1 RST  |  1,000 GP = 0.1 RST  |  100 GP = 0.01 RST');
         return true;
@@ -154,6 +161,15 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
 
     const rstValue = (newPending / RST_GP_PER_TOKEN).toFixed(4);
     player.messageGame('Sold for ' + saleGP + ' GP! Total: ' + newPending + ' GP = ' + rstValue + ' RST');
+
+    // Tutorial progression
+    const tStep = getTutorialStep(player.username);
+    if (tStep === 1) {
+        // First sale — tutorial complete, clear hint
+        setTutorialStep(player.username, 2);
+        player.stopHint();
+        player.messageGame('You sold your resources! Visit /play in your browser to mint your RST tokens!');
+    }
 
     if (newPending < 10) {
         player.messageGame('Keep going! Need 10 GP minimum to mint RST.');

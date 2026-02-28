@@ -1,0 +1,47 @@
+// ============================================================
+// RST Tutorial Tracker
+// Guides new players: trees → Lumbridge General Store → /play
+//
+// Steps:
+//   0 = Brand new player      — hint arrow on Draynor trees
+//   1 = Has logs/ores          — hint arrow on Lumbridge General Store
+//   2 = First sale done        — tutorial complete, hint cleared
+//
+// Existing players (with save files) are never added to this
+// map, so they receive no tutorial hint.
+// ============================================================
+
+export const tutorialStep = new Map<string, number>();
+
+export function getTutorialStep(username: string): number {
+    return tutorialStep.get(username) ?? -1; // -1 = existing player, skip tutorial
+}
+
+export function setTutorialStep(username: string, step: number): void {
+    tutorialStep.set(username, step);
+}
+
+// Draynor forest tree cluster (south of spawn at 3097, 3277)
+export const TUTORIAL_TREE_X = 3090;
+export const TUTORIAL_TREE_Z = 3265;
+
+// Lumbridge General Store (NPC 520/521)
+export const TUTORIAL_STORE_X = 3213;
+export const TUTORIAL_STORE_Z = 3246;
+
+// Item IDs that count as "harvestable resources" (triggers step 0 → 1)
+export const RESOURCE_ITEM_IDS = new Set([
+    1511, // logs
+    1521, // oak logs
+    1519, // willow logs
+    1515, // yew logs
+    1513, // magic logs
+    436,  // copper ore
+    438,  // tin ore
+    440,  // iron ore
+    453,  // coal
+    444,  // gold ore
+    447,  // mithril ore
+    449,  // adamantite ore
+    451,  // runite ore
+]);
