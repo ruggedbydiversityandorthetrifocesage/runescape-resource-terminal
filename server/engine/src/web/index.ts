@@ -78,7 +78,7 @@ button:disabled { background: #333; color: #666; cursor: not-allowed; }
   <div class="contract">RST: 0xb09fc29c112af8293539477e23d8df1d3126639642767d707277131352040cbb</div>
 </div>
 <script>
-const RST_CONTRACT = 'opt1sqqsrj9ex92gwjwus3ufz60nclkdgzdtgnqkv9ya8';
+const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
 let connectedWallet = null;
 
 function bech32mAddrToHex(addr) {
@@ -151,10 +151,9 @@ async function connectAndClaim() {
       } catch(e) { console.warn('[RST] getMLDSAPublicKey failed on claim page:', e); }
     }
     if (!recipientHashClaim) { showStatus('Could not resolve recipient address. Make sure OP_WALLET is connected.', 'error'); return; }
-    const amountWei = BigInt(gpAmount) * (10n ** 18n) / 10000n;
-    const addrPadded = recipientHashClaim.padStart(64, '0');
+    const amountWei = BigInt(gpAmount) * (10n ** 18n) / 1000n;
     const amtHex = amountWei.toString(16).padStart(64, '0');
-    const calldata = hexToBytes('3950e061' + addrPadded + amtHex);
+    const calldata = hexToBytes('16b06937' + amtHex);
     showStatus('Fetching UTXOs...', 'info');
     const utxosRaw = await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_getUTXOs', params: [connectedWallet, true] }) });
     const utxosJson = await utxosRaw.json();
@@ -168,7 +167,7 @@ async function connectAndClaim() {
     });
     const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
     // RST contract secret = tweakedPubkey (32 bytes), not the P2OP witness program (21 bytes)
-    const contractHexClaim = '0xfdcb53e48b0330e2714efa4c5de48f29893d89023ee661d94a15b2948138a77f';
+    const contractHexClaim = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
     const params = { to: RST_CONTRACT, contract: contractHexClaim, calldata, from: connectedWallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: true, revealMLDSAPublicKey: false };
     showStatus('Check OP_WALLET to sign...', 'info');
     if (typeof web3.signAndBroadcastInteraction === 'function') {
@@ -181,7 +180,7 @@ async function connectAndClaim() {
     }
     await fetch('/rst/confirm-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, wallet: connectedWallet }) });
     document.getElementById('rstInfo').style.display = 'none';
-    showStatus('SUCCESS! ' + (Number(amountWei) / 1e18).toFixed(6) + ' RST minted!', 'success');
+    showStatus('SUCCESS! ' + (Number(amountWei) / 1e18).toFixed(6) + ' RST claimed!', 'success');
   } catch(e) { showStatus('Failed: ' + (e.message || String(e)), 'error'); }
 }
 
@@ -258,18 +257,28 @@ function showStatus(msg, type) {
                     username,
                     wallet,
                     allowanceGP,
-                    allowanceRST: allowanceGP / 10000,
+                    allowanceRST: allowanceGP / 1000,
                 }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
             }
 
             // RST: Balance check
             if (url.pathname === '/rst/balance') {
                 const username = url.searchParams.get('username')?.toLowerCase() ?? '';
-                const { pendingGP, totalGPConverted, walletRegistry } = await import('../engine/pill/PillMerchant.js');
+                const { pendingGP, grantedGP, totalGPConverted, walletRegistry } = await import('../engine/pill/PillMerchant.js');
                 const pending = pendingGP.get(username) ?? 0;
+                const granted = grantedGP.get(username) ?? 0;
                 const totalGP = totalGPConverted.get(username) ?? 0;
                 const wallet = walletRegistry.get(username) ?? null;
-                return new Response(JSON.stringify({ username, pending, totalGP, rstPending: pending / 10000, wallet }), {
+                return new Response(JSON.stringify({ username, pending, granted, totalGP, rstPending: pending / 1000, rstGranted: granted / 1000, wallet }), {
+                    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                });
+            }
+
+            // RST: Server address — returns server's MLDSA hash for setMinter admin call
+            if (url.pathname === '/rst/server-address' && req.method === 'GET') {
+                const { getServerMldsaHash } = await import('../engine/pill/RSTMinter.js');
+                const hash = getServerMldsaHash();
+                return new Response(JSON.stringify({ mldsaHash: hash }), {
                     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
                 });
             }
@@ -278,15 +287,53 @@ function showStatus(msg, type) {
             if (url.pathname === '/rst/confirm-claim' && req.method === 'POST') {
                 const body = await req.json() as any;
                 const { username, wallet } = body;
-                const { pendingGP, walletRegistry, savePending, saveWallets } = await import('../engine/pill/PillMerchant.js');
-                const gpCleared = pendingGP.get(username?.toLowerCase()) ?? 0;
-                pendingGP.delete(username?.toLowerCase());
-                savePending();
+                const { pendingGP, grantedGP, walletRegistry, saveWallets, saveGranted } = await import('../engine/pill/PillMerchant.js');
+                // Only save the wallet address here. Pending GP is cleared server-side in
+                // PillMerchant.ts only when grantClaim actually succeeds — never here.
                 if (wallet) { walletRegistry.set(username?.toLowerCase(), wallet); saveWallets(); }
-                console.log('[RST] Claimed: ' + username + ' cleared ' + gpCleared + ' GP');
-                return new Response(JSON.stringify({ success: true, gpCleared }), {
+                // Clear grantedGP since player has successfully claimed their on-chain RST
+                const gpGranted = grantedGP.get(username?.toLowerCase()) ?? 0;
+                if (gpGranted > 0) { grantedGP.delete(username?.toLowerCase()); saveGranted(); }
+                const gpPending = pendingGP.get(username?.toLowerCase()) ?? 0;
+                console.log('[RST] confirm-claim: ' + username + ' wallet saved, granted GP cleared: ' + gpGranted + ', pending GP = ' + gpPending);
+                return new Response(JSON.stringify({ success: true, gpCleared: gpGranted }), {
                     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
                 });
+            }
+
+            // RST Shop: Confirm purchase — validate nonce, deduct RST, give item in-game
+            if (url.pathname === '/shop/confirm-purchase' && req.method === 'POST') {
+                try {
+                    const body = await req.json() as any;
+                    const { username, nonce } = body;
+                    if (!username || !nonce) {
+                        return new Response(JSON.stringify({ success: false, message: 'Missing username or nonce.' }), {
+                            status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                        });
+                    }
+                    // Player must be online — item can only be delivered to a live session
+                    const player = Array.from(World.players).find(p => p.username === username.toLowerCase());
+                    if (!player) {
+                        return new Response(JSON.stringify({ success: false, message: 'You must be logged in-game to receive your item. Log in first, then confirm here.' }), {
+                            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                        });
+                    }
+                    const { confirmRSTShopPurchase } = await import('../engine/pill/RSTShop.js');
+                    const result = confirmRSTShopPurchase(username.toLowerCase(), nonce, World.currentTick);
+                    if (result.success && result.itemId != null) {
+                        const InvTypeMod = (await import('#/cache/config/InvType.js')).default;
+                        player.invAdd(InvTypeMod.INV, result.itemId, 1, false);
+                        player.messageGame(result.message!);
+                        console.log('[RST Shop] ' + username + ' received ' + result.itemName + ' for ' + result.itemId);
+                    }
+                    return new Response(JSON.stringify(result), {
+                        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                    });
+                } catch (e: any) {
+                    return new Response(JSON.stringify({ success: false, message: e.message }), {
+                        status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                    });
+                }
             }
 
             // RST: Register wallet address for a username
@@ -395,6 +442,19 @@ button.conn-btn:hover { background: #243300; }
 .htp-close:hover { color: #888; border-color: #555; }
 .htp-btn { width: 100%; background: #1a1200; border: 1px solid #f0c030; color: #f0c030; padding: 7px; font-family: monospace; font-size: 0.72em; cursor: pointer; border-radius: 3px; margin-bottom: 6px; text-align: center; }
 .htp-btn:hover { background: #2a2000; }
+/* RST Shop purchase confirmation modal */
+.shop-modal-box { border-color: #f7931a !important; }
+.shop-modal-box h2 { color: #f7931a !important; }
+.shop-item-name { font-size: 1.6em; color: #f0c030; margin: 10px 0 4px; font-weight: bold; }
+.shop-cost-label { font-size: 0.75em; color: #888; margin-bottom: 18px; }
+.shop-confirm-btn { background: #f7931a; color: #000; border: none; padding: 13px; font-family: monospace; font-size: 0.9em; font-weight: bold; cursor: pointer; border-radius: 4px; width: 100%; margin-bottom: 7px; }
+.shop-confirm-btn:disabled { background: #2a1a00; color: #555; cursor: default; }
+/* Admin panel — deployer-only, never rendered for other wallets */
+.admin-section { border-color: #cc0000 !important; }
+.admin-section h3 { color: #ff4444 !important; }
+.admin-btn { width: 100%; background: #cc0000; color: #fff; border: none; padding: 7px; font-family: monospace; font-size: 0.75em; font-weight: bold; cursor: pointer; border-radius: 3px; margin-top: 8px; }
+.admin-btn:hover { background: #aa0000; }
+.admin-btn:disabled { background: #330000; color: #666; cursor: default; }
 </style>
 </head>
 <body>
@@ -422,11 +482,15 @@ button.conn-btn:hover { background: #243300; }
       <h3>Your Stats</h3>
       <div class="stat-row"><span>Username</span><span id="statUser">-</span></div>
       <div class="stat-row"><span>GP Converted</span><span id="statGP">0 GP</span></div>
-      <div class="stat-row"><span>RST Pending</span><span id="statRST">0.0000</span></div>
+      <div class="stat-row"><span>RST Pending</span><span id="statRST">0.0000 RST</span></div>
+      <div class="stat-row"><span>RST Mempool</span><span id="statRSTMempool">0.0000 RST</span></div>
       <div class="stat-row"><span>RST Balance</span><span id="statRSTBal">-</span></div>
       <div class="stat-row"><span>tBTC Balance</span><span id="statBTC">-</span></div>
       <button class="claim-btn" id="claimBtn" onclick="openClaimModal()" disabled>CLAIM RST</button>
       <button class="claim-btn" style="background:#1a1a1a;color:#666;border:1px solid #333;margin-top:4px;" onclick="disconnectWallet()">Disconnect</button>
+      <div style="margin-top:10px;padding:8px;background:#0a1a0a;border:1px solid #1a4a1a;border-radius:4px;font-size:0.72em;color:#5a9a5a;line-height:1.5;">
+        &#x231B; On-chain grants take <strong>1&ndash;3 min</strong> to confirm on testnet &mdash; this is normal. RST Mempool updates automatically when ready.
+      </div>
     </div>
     <!-- Leaderboard -->
     <div class="s-section">
@@ -462,7 +526,7 @@ button.conn-btn:hover { background: #243300; }
     <div class="htp-section">
       <h3>IMPORT THE RST TOKEN INTO OP_WALLET</h3>
       <p>Open OP_WALLET &rarr; Tokens &rarr; Import Token &rarr; paste this address:</p>
-      <span class="htp-addr">0xfdcb53e48b0330e2714efa4c5de48f29893d89023ee661d94a15b2948138a77f</span>
+      <span class="htp-addr">0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1</span>
     </div>
     <div class="htp-section">
       <h3>STEPS</h3>
@@ -472,7 +536,7 @@ button.conn-btn:hover { background: #243300; }
       <div class="htp-step"><span class="htp-num" style="color:#888">&#x2139;</span><span class="htp-desc" style="color:#666">Forgot your password or username? You can always create a new account with the same wallet address.</span></div>
       <div class="htp-step"><span class="htp-num">4.</span><span class="htp-desc"><strong style="color:#f0c030">Chop some trees</strong> &mdash; Walk to the trees near spawn and click one. Chop until you have 2&ndash;3 logs.</span></div>
       <div class="htp-step"><span class="htp-num">5.</span><span class="htp-desc"><strong style="color:#f0c030">Sell at the General Store</strong> &mdash; Walk to the nearby General Store NPC and click them. Your logs convert to GP automatically.</span></div>
-      <div class="htp-step"><span class="htp-num">6.</span><span class="htp-desc"><strong style="color:#f0c030">Sign &amp; Mint RST</strong> &mdash; A mint button appears in the sidebar. Click SIGN &amp; MINT WITH OP_WALLET, approve in OP_WALLET. RST lands in your wallet on Bitcoin L1.</span></div>
+      <div class="htp-step"><span class="htp-num">6.</span><span class="htp-desc"><strong style="color:#f0c030">Sign &amp; Mint RST</strong> &mdash; A mint button appears in the sidebar. Click SIGN &amp; CLAIM WITH OP_WALLET, approve in OP_WALLET. RST lands in your wallet on Bitcoin L1.</span></div>
     </div>
     <div class="htp-section">
       <h3>CONVERSION RATES</h3>
@@ -485,19 +549,37 @@ button.conn-btn:hover { background: #243300; }
     <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">The more you play, the more you mint. Keep chopping. &#x1F333;&#x26CF;&#xFE0F;</p>
   </div>
 </div>
+<!-- RST Shop Purchase Modal -->
+<div class="modal-bg" id="shopModal">
+  <div class="modal-box shop-modal-box">
+    <h2>&#x1F6D2; RST SHOP PURCHASE</h2>
+    <div class="shop-item-name" id="shopItemName">-</div>
+    <div class="shop-cost-label" id="shopCostLabel">X RST will be burned from your balance</div>
+    <button class="shop-confirm-btn" id="shopConfirmBtn" onclick="executeShopConfirm()">CONFIRM &amp; RECEIVE ITEM</button>
+    <button class="dismiss-btn" onclick="dismissShopModal()">Cancel</button>
+    <div id="shopModalStatus" class="modal-status"></div>
+  </div>
+</div>
 <!-- Mint Modal -->
 <div class="modal-bg" id="mintModal">
   <div class="modal-box">
-    <h2>&#x26CF; RST MINT READY</h2>
+    <h2>&#x26CF; RST CLAIM READY</h2>
     <div class="modal-amt"><span id="mintAmt">0</span><span class="modal-unit"> RST</span></div>
     <div class="modal-sub" id="mintSub">Sign to receive your tokens!</div>
-    <button class="sign-btn" id="signBtn" onclick="executeMint()">SIGN &amp; MINT WITH OP_WALLET</button>
+    <button class="sign-btn" id="signBtn" onclick="executeMint()">SIGN &amp; CLAIM WITH OP_WALLET</button>
     <button class="dismiss-btn" onclick="dismissModal()">Claim later at /rst/claim</button>
     <div id="modalStatus" class="modal-status"></div>
   </div>
 </div>
 <script>
-const RST_CONTRACT = 'opt1sqqsrj9ex92gwjwus3ufz60nclkdgzdtgnqkv9ya8';
+const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
+// RST v8 — hardcoded server MLDSA hash as minter in onDeployment
+const RST_V2_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
+const RST_V2_CONTRACT_HEX = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+// Deployer MLDSA hash — SHA256 of OP_WALLET deployer MLDSA pubkey; used for admin visibility check
+const DEPLOYER_ADDRESS = 'ad5bad18085ad4cf4f75b71d672bee0b19df826d622279b0020cc29120efce33';
+// Motoswap NativeSwap pool contract that emitted LiquidityListed for the RST/BTC pair
+const LP_PAIR_ADDRESS = '4397befe4e067390596b3c296e77fe86589487bf3bf3f0a9a93ce794e2d78fb5';
 let wallet = null;
 let username = null;
 let mintData = null;
@@ -505,6 +587,9 @@ let es = null;
 let mldsaHash = null; // 32-byte SHA256 of MLDSA pubkey — the real OPNet recipient address
 let lastMintTime = 0;   // timestamp of last successful mint (cooldown tracking)
 let walletRefreshInterval = null;
+let shopPurchaseData = null;
+// Mint state machine — module-level so DOM repaints can't corrupt it
+let mintState = 'idle'; // 'idle' | 'in_progress' | 'ready_to_sign'
 
 function sha256PureJS(data) {
   const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
@@ -625,6 +710,7 @@ async function setupSession(u, w, showAlert) {
   if (walletRefreshInterval) clearInterval(walletRefreshInterval);
   walletRefreshInterval = setInterval(() => { refreshBalance(); refreshWalletBalances(); }, 30000);
   if (showAlert) console.log('[RST] Session started for', u, w);
+  checkAdminPanel();
 }
 
 function startSSE(u) {
@@ -639,10 +725,30 @@ function startSSE(u) {
         showSuccessBanner('🎉 ' + rstDisplay + ' RST sent to your wallet! (~30s to confirm)');
         refreshBalance();
         setTimeout(() => refreshWalletBalances(), 35000);
-      } else if (d.type === 'mint_ready') {
-        // Fallback: no server key configured — show browser signing modal
+      } else if (d.type === 'minting_started') {
+        // grantClaim TX is now in flight — lock button immediately (before TX confirms)
+        mintState = 'in_progress';
         mintData = d;
-        showMintModal(d);
+        const claimBtn = document.getElementById('claimBtn');
+        if (claimBtn) { claimBtn.disabled = true; claimBtn.textContent = 'MINT IN PROGRESS...'; }
+      } else if (d.type === 'mint_ready') {
+        // grantClaim TX broadcast — show modal and start polling claimableOf.
+        // If already confirmed (ready_to_sign), ignore stale SSE events — don't reset the modal.
+        if (mintState === 'ready_to_sign') {
+          // Already confirmed on-chain — just update amount if larger
+          if (d.rstWei && mintData) {
+            const newWei = BigInt(d.rstWei);
+            const curWei = BigInt(mintData.rstWei || '0');
+            if (newWei > curWei) { mintData.rstWei = d.rstWei; mintData.rstAmount = d.rstAmount; }
+          }
+        } else {
+          mintData = d;
+          showMintModal(d);
+        }
+      } else if (d.type === 'shop_purchase_ready') {
+        // RST Shop: item selected in-game, confirm here to receive it
+        shopPurchaseData = d;
+        showShopModal(d);
       }
     } catch {}
   };
@@ -655,8 +761,26 @@ async function refreshBalance() {
     const r = await fetch('/rst/balance?username=' + encodeURIComponent(username));
     const d = await r.json();
     document.getElementById('statGP').textContent = (d.totalGP || 0).toLocaleString() + ' GP';
-    document.getElementById('statRST').textContent = ((d.pending || 0) / 10000).toFixed(4) + ' RST';
-    document.getElementById('claimBtn').disabled = false;
+    // RST Pending = server-side GP sold but not yet granted on-chain
+    const serverPendingRst = (d.pending || 0) / 1000;
+    // RST Mempool = grantClaim fired (in mempool or confirmed) but not yet claimed by player
+    const serverGrantedRst = (d.granted || 0) / 1000;
+    const claimable = await fetchClaimableOf();
+    const claimableRst = Number(claimable) / 1e18;
+    // Use on-chain confirmed value if larger, otherwise server-tracked (covers in-mempool case)
+    const mempoolDisplay = claimableRst > serverGrantedRst ? claimableRst : serverGrantedRst;
+    document.getElementById('statRST').textContent = serverPendingRst.toFixed(4) + ' RST';
+    document.getElementById('statRSTMempool').textContent = mempoolDisplay.toFixed(4) + ' RST';
+    // If claimableOf > 0, transition to ready_to_sign from idle OR in_progress (SSE reconnect recovery)
+    if (claimable > 0n && (mintState === 'idle' || mintState === 'in_progress') && mintCooldownRemaining() === 0) {
+      mintData = { rstWei: claimable.toString(), rstAmount: claimableRst, gpAmount: Math.round(claimableRst * 1000), wallet };
+      mintState = 'ready_to_sign';
+      const claimBtnR = document.getElementById('claimBtn');
+      if (claimBtnR) { claimBtnR.disabled = false; claimBtnR.textContent = 'CLAIM RST'; }
+    } else {
+      const claimBtnR = document.getElementById('claimBtn');
+      if (claimBtnR && mintState === 'idle') claimBtnR.disabled = false;
+    }
   } catch {}
 }
 
@@ -676,7 +800,7 @@ async function fetchUTXOs(address) {
     // btc_getUTXOs returns {confirmed: RawIUTXO[], pending: RawIUTXO[], raw: string[], spentTransactions: [...]}
     // Each RawIUTXO.raw is an index into result.raw[] which holds the base64-encoded tx hex
     const rawTxs = Array.isArray(result.raw) ? result.raw : [];
-    const all = [...(result.confirmed || []), ...(result.pending || [])];
+    const all = [...(result.confirmed || [])]; // confirmed only — pending UTXOs cause script mismatches
     console.log('[RST] UTXO count:', all.length, 'rawTxs count:', rawTxs.length);
     return all.map(u => {
       const rawTx = typeof u.raw === 'number' ? rawTxs[u.raw] : (typeof u.raw === 'string' ? u.raw : undefined);
@@ -704,10 +828,11 @@ async function fetchUTXOs(address) {
 
 async function refreshWalletBalances() {
   if (!wallet) return;
-  // tBTC balance — sum UTXOs as fallback since btc_getBalance is unreliable on testnet
+  // tBTC balance — only sum CONFIRMED UTXOs to avoid double-counting unconfirmed change outputs
   try {
-    const utxos = await fetchUTXOs(wallet);
-    let btcSats = utxos.reduce((sum, u) => sum + u.value, 0n);
+    const btcResult = await opnetRpc('btc_getUTXOs', [wallet, true]);
+    const confirmedUtxos = btcResult?.confirmed || [];
+    const btcSats = confirmedUtxos.reduce((sum, u) => sum + BigInt(u.value || 0), 0n);
     document.getElementById('statBTC').textContent = (Number(btcSats) / 1e8).toFixed(6) + ' tBTC';
   } catch(e) { document.getElementById('statBTC').textContent = '?'; }
   // RST token balance via balanceOf(address) — must use MLDSA hash, not bech32m witness program
@@ -753,48 +878,179 @@ async function refreshWalletBalances() {
 }
 
 const MINT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+let claimPollInterval = null;
+
+// Shared claimableOf helper — returns BigInt wei (0n if unavailable)
+async function fetchClaimableOf() {
+  if (!mldsaHash) return 0n;
+  try {
+    const calldata = '7511422a' + mldsaHash.padStart(64, '0');
+    const result = await opnetRpc('btc_call', [RST_CONTRACT, calldata, null, null]);
+    const raw = typeof result === 'string' ? result : (result?.result ?? result?.data ?? '');
+    let hexStr = '';
+    if (typeof raw === 'string' && raw.length > 0) {
+      if (raw.startsWith('0x')) hexStr = raw.slice(2);
+      else if (/^[0-9a-fA-F]+$/.test(raw)) hexStr = raw;
+      else { try { const b = atob(raw); hexStr = Array.from(b).map(c => c.charCodeAt(0).toString(16).padStart(2,'0')).join(''); } catch {} }
+    }
+    if (hexStr.length >= 64) return BigInt('0x' + hexStr.slice(0, 64));
+  } catch {}
+  return 0n;
+}
 
 function mintCooldownRemaining() {
   if (!lastMintTime) return 0;
   return Math.max(0, MINT_COOLDOWN_MS - (Date.now() - lastMintTime));
 }
 
+function stopClaimPolling() {
+  if (claimPollInterval) { clearInterval(claimPollInterval); claimPollInterval = null; }
+  // Only reset button if fully idle (not in_progress or ready_to_sign)
+  if (mintState === 'idle') {
+    const claimBtn = document.getElementById('claimBtn');
+    if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
+  }
+}
+
+async function pollClaimableUntilReady() {
+  if (claimPollInterval) { clearInterval(claimPollInterval); claimPollInterval = null; }
+  const addrHex = mldsaHash;
+  if (!addrHex) return;
+  // Transition to in_progress — lock button
+  mintState = 'in_progress';
+  const claimBtn = document.getElementById('claimBtn');
+  if (claimBtn) { claimBtn.disabled = true; claimBtn.textContent = 'MINT IN PROGRESS...'; }
+  const calldata = '7511422a' + addrHex.padStart(64, '0');
+  console.log('[RST] polling claimableOf for', addrHex.slice(0,8), '...');
+  claimPollInterval = setInterval(async () => {
+    if (mintState !== 'in_progress') { clearInterval(claimPollInterval); claimPollInterval = null; return; }
+    try {
+      const result = await opnetRpc('btc_call', [RST_CONTRACT, calldata, null, null]);
+      const raw = typeof result === 'string' ? result : (result?.result ?? result?.data ?? '');
+      let hexStr = '';
+      if (typeof raw === 'string' && raw.length > 0) {
+        if (raw.startsWith('0x')) { hexStr = raw.slice(2); }
+        else if (/^[0-9a-fA-F]+$/.test(raw)) { hexStr = raw; }
+        else { try { const b = atob(raw); hexStr = Array.from(b).map(c => c.charCodeAt(0).toString(16).padStart(2,'0')).join(''); } catch {} }
+      }
+      console.log('[RST] claimableOf hex:', hexStr.slice(0,16) || '(empty)');
+      if (hexStr.length >= 64) {
+        const claimable = BigInt('0x' + hexStr.slice(0, 64));
+        console.log('[RST] claimable:', claimable.toString());
+        if (claimable > 0n) {
+          clearInterval(claimPollInterval); claimPollInterval = null;
+          const claimableRst = Number(claimable) / 1e18;
+          // Sync mintData with authoritative on-chain amount
+          if (mintData) { mintData.rstWei = claimable.toString(); mintData.rstAmount = claimableRst; }
+          else { mintData = { rstWei: claimable.toString(), rstAmount: claimableRst, gpAmount: Math.round(claimableRst * 1000), wallet }; }
+          // Transition to ready_to_sign FIRST (before any DOM updates that could throw)
+          mintState = 'ready_to_sign';
+          // Update button — CLAIM RST is clickable (grantClaim confirmed, ready for claim())
+          if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
+          // Update displays
+          const rstMempoolEl = document.getElementById('statRSTMempool');
+          if (rstMempoolEl) rstMempoolEl.textContent = claimableRst.toFixed(4) + ' RST';
+          const amtEl = document.getElementById('mintAmt');
+          if (amtEl) amtEl.textContent = claimableRst.toFixed(4);
+          const subEl = document.getElementById('mintSub');
+          if (subEl) subEl.textContent = 'Total claimable: ' + claimableRst.toFixed(4) + ' RST (' + Math.round(claimableRst * 1000).toLocaleString() + ' GP). Sign to claim!';
+          // Unlock Sign button in modal
+          const signBtn = document.getElementById('signBtn');
+          if (signBtn) { signBtn.disabled = false; signBtn.textContent = 'SIGN & CLAIM WITH OP_WALLET'; }
+          setModalStatus('Confirmed on-chain! Sign to receive your RST.', 'success');
+          console.log('[RST] ✅ claimableOf confirmed — CLAIM RST enabled');
+        }
+      }
+    } catch(e) { console.warn('[RST] claimableOf poll error:', e); }
+  }, 10000);
+}
+
 function showMintModal(d) {
   document.getElementById('mintAmt').textContent = (d.rstAmount || 0).toFixed(4);
-  document.getElementById('mintSub').textContent = 'Sold resources for ' + (d.gpAmount || 0).toLocaleString() + ' GP. Sign to mint!';
-  const cooldown = mintCooldownRemaining();
-  if (cooldown > 0) {
-    const mins = Math.ceil(cooldown / 60000);
-    document.getElementById('signBtn').disabled = true;
-    document.getElementById('signBtn').textContent = 'WAIT ' + mins + 'm FOR PREVIOUS TX TO CONFIRM';
-    setModalStatus('Previous mint is still confirming. Wait ~' + mins + ' more minute(s) before signing again to avoid UTXO conflicts.', 'info');
-  } else {
-    document.getElementById('signBtn').disabled = false;
-    document.getElementById('signBtn').textContent = 'SIGN & MINT WITH OP_WALLET';
-    document.getElementById('modalStatus').textContent = '';
-    document.getElementById('modalStatus').className = 'modal-status';
-  }
+  document.getElementById('mintSub').textContent = 'Sold resources for ' + (d.gpAmount || 0).toLocaleString() + ' GP. Sign to claim!';
+  // Always start with Sign disabled — poll claimableOf until grantClaim is confirmed on-chain.
+  // This prevents claim() racing grantClaim into the same block ("Insufficient claim allowance").
+  document.getElementById('signBtn').disabled = true;
+  document.getElementById('signBtn').textContent = 'WAITING FOR CONFIRMATION...';
+  setModalStatus('grantClaim is confirming on-chain (~1-2 min). Sign will unlock automatically.', 'info');
   document.getElementById('mintModal').classList.add('show');
+  pollClaimableUntilReady();
 }
 
 async function openClaimModal() {
   if (!username || !wallet) { alert('Connect your wallet first.'); return; }
+  // If grantClaim confirmed on-chain — reopen modal with Sign already ready
+  if (mintState === 'ready_to_sign') {
+    // Always fetch fresh claimableOf so display shows the real total (not stale mintData)
+    const freshClaimable = await fetchClaimableOf();
+    const displayAmt = freshClaimable > 0n ? Number(freshClaimable) / 1e18 : (mintData?.rstAmount || 0);
+    const displayWei = freshClaimable > 0n ? freshClaimable.toString() : (mintData?.rstWei || '0');
+    if (!mintData) mintData = { rstAmount: displayAmt, rstWei: displayWei, gpAmount: Math.round(displayAmt * 1000), wallet };
+    else { mintData.rstAmount = displayAmt; mintData.rstWei = displayWei; }
+    document.getElementById('mintAmt').textContent = displayAmt.toFixed(4);
+    document.getElementById('mintSub').textContent = 'Total claimable: ' + displayAmt.toFixed(4) + ' RST. Sign to receive!';
+    document.getElementById('signBtn').disabled = false;
+    document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+    setModalStatus('Confirmed on-chain! Sign to receive your RST.', 'success');
+    document.getElementById('mintModal').classList.add('show');
+    return;
+  }
+  // If mint TX is in flight — don't allow clicking through
+  if (mintState === 'in_progress') {
+    alert('Transaction in progress. Sign will unlock automatically when confirmed (~1 min).');
+    return;
+  }
   try {
     const r = await fetch('/rst/balance?username=' + encodeURIComponent(username));
     const d = await r.json();
     const gp = d.pending || 0;
-    if (gp < 10) { alert('No RST pending yet. Sell resources to the RST merchant first!'); return; }
-    mintData = { rstAmount: gp / 10000, gpAmount: gp, rstWei: (BigInt(gp) * (10n ** 18n) / 10000n).toString(), wallet };
+    if (gp < 10) {
+      // No server-side pending — check if there's already-granted RST on-chain waiting to be claimed
+      const claimable = await fetchClaimableOf();
+      if (claimable > 0n) {
+        const claimableRst = Number(claimable) / 1e18;
+        mintData = { rstWei: claimable.toString(), rstAmount: claimableRst, gpAmount: Math.round(claimableRst * 1000), wallet };
+        mintState = 'ready_to_sign';
+        document.getElementById('mintAmt').textContent = claimableRst.toFixed(4);
+        document.getElementById('mintSub').textContent = 'RST confirmed on-chain. Sign to receive!';
+        document.getElementById('signBtn').disabled = false;
+        document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+        setModalStatus('Confirmed on-chain! Sign to receive your RST.', 'success');
+        document.getElementById('mintModal').classList.add('show');
+        const claimBtn = document.getElementById('claimBtn');
+        if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
+        return;
+      }
+      alert('No RST pending yet. Sell resources to the RST merchant first!');
+      return;
+    }
+    mintData = { rstAmount: gp / 1000, gpAmount: gp, rstWei: (BigInt(gp) * (10n ** 18n) / 1000n).toString(), wallet };
     showMintModal(mintData);
   } catch(e) { alert('Error: ' + e.message); }
 }
 
-function dismissModal() { document.getElementById('mintModal').classList.remove('show'); }
+function dismissModal() {
+  // If grantClaim is still in-flight, keep the poll running in the background
+  // so it can unlock the button automatically when confirmed. Don't reset state.
+  if (mintState === 'in_progress') {
+    document.getElementById('mintModal').classList.remove('show');
+    const claimBtn = document.getElementById('claimBtn');
+    if (claimBtn) { claimBtn.disabled = true; claimBtn.textContent = 'MINT IN PROGRESS...'; }
+    return;
+  }
+  if (claimPollInterval) { clearInterval(claimPollInterval); claimPollInterval = null; }
+  const claimBtn = document.getElementById('claimBtn');
+  if (mintState === 'idle') {
+    if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
+  }
+  // ready_to_sign: leave button as CLAIM RST (grantClaim confirmed, awaiting player claim)
+  document.getElementById('mintModal').classList.remove('show');
+}
 
 function disconnectWallet() {
   if (es) { es.close(); es = null; }
   if (walletRefreshInterval) { clearInterval(walletRefreshInterval); walletRefreshInterval = null; }
-  username = null; wallet = null; mintData = null; mldsaHash = null;
+  username = null; wallet = null; mintData = null; mldsaHash = null; mintState = 'idle';
   localStorage.removeItem('rst_username');
   document.getElementById('walletStatus').textContent = 'No wallet connected — connect in the sidebar';
   document.getElementById('walletStatus').className = 'wallet-status';
@@ -802,6 +1058,8 @@ function disconnectWallet() {
   document.getElementById('connectSection').style.display = 'block';
   document.getElementById('usernameInput').value = '';
   dismissModal();
+  const adminEl = document.getElementById('adminSection');
+  if (adminEl) adminEl.remove();
 }
 
 async function broadcastOpnet(txHex) {
@@ -824,7 +1082,7 @@ async function executeMint() {
     if (!web3) {
       setModalStatus('OP_WALLET not found! Make sure the extension is installed.', 'error');
       document.getElementById('signBtn').disabled = false;
-      document.getElementById('signBtn').textContent = 'SIGN & MINT WITH OP_WALLET';
+      document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
       return;
     }
     // Use MLDSA hash as recipient — this is what OPNet uses as the actual address, not the bech32m witness program
@@ -842,11 +1100,10 @@ async function executeMint() {
         } catch(e) { console.warn('[RST] Could not get MLDSA key at mint time:', e); }
       }
     }
-    if (!recipientHash) { setModalStatus('Could not resolve recipient address. Reconnect wallet.', 'error'); document.getElementById('signBtn').disabled = false; document.getElementById('signBtn').textContent = 'SIGN & MINT WITH OP_WALLET'; return; }
+    if (!recipientHash) { setModalStatus('Could not resolve recipient address. Reconnect wallet.', 'error'); document.getElementById('signBtn').disabled = false; document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET'; return; }
     const rstWei = BigInt(d.rstWei || '0');
-    const addrPadded = recipientHash.padStart(64, '0');
     const amtHex = rstWei.toString(16).padStart(64, '0');
-    const calldata = hexToBytes('3950e061' + addrPadded + amtHex);
+    const calldata = hexToBytes('16b06937' + amtHex);
     console.log('[RST] calldata built, fetching UTXOs...');
     setModalStatus('Preparing transaction...', 'info');
     const utxos = await fetchUTXOs(wallet);
@@ -854,8 +1111,8 @@ async function executeMint() {
     const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
     // RST contract secret = tweakedPubkey from getPublicKeyInfo (32 bytes)
     // bech32mAddrToHex gives only 21 bytes (P2OP witness program) — use the resolved tweakedPubkey instead
-    const contractHex = '0xfdcb53e48b0330e2714efa4c5de48f29893d89023ee661d94a15b2948138a77f';
-    const params = { to: RST_CONTRACT, contract: contractHex, calldata, from: wallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: true, revealMLDSAPublicKey: false };
+    const contractHex = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+    const params = { to: RST_CONTRACT, contract: contractHex, calldata, from: wallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: false, revealMLDSAPublicKey: false };
     setModalStatus('Waiting for OP_WALLET signature...', 'info');
     if (typeof web3.signAndBroadcastInteraction === 'function') {
       const res = await web3.signAndBroadcastInteraction(params);
@@ -870,16 +1127,20 @@ async function executeMint() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, wallet, gpAmount: d.gpAmount })
     });
+    if (claimPollInterval) { clearInterval(claimPollInterval); claimPollInterval = null; }
+    mintState = 'idle';
     lastMintTime = Date.now();
-    setModalStatus('SUCCESS! ' + (d.rstAmount || 0).toFixed(4) + ' RST minted!', 'success');
+    setModalStatus('SUCCESS! ' + (d.rstAmount || 0).toFixed(4) + ' RST claimed!', 'success');
     mintData = null;
-    document.getElementById('signBtn').textContent = 'MINTED!';
+    document.getElementById('signBtn').textContent = 'CLAIMED!';
+    const claimBtnDone = document.getElementById('claimBtn');
+    if (claimBtnDone) { claimBtnDone.textContent = 'CLAIM RST'; claimBtnDone.disabled = false; }
     setTimeout(() => { dismissModal(); refreshBalance(); refreshWalletBalances(); fetchLeaderboard(); }, 3000);
   } catch(e) {
     console.error('[RST] executeMint error:', e);
     setModalStatus('Failed: ' + (e.message || String(e)), 'error');
     document.getElementById('signBtn').disabled = false;
-    document.getElementById('signBtn').textContent = 'SIGN & MINT WITH OP_WALLET';
+    document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
   }
 }
 
@@ -900,6 +1161,200 @@ function showSuccessBanner(msg) {
     dismissModal();
     document.getElementById('signBtn').style.display = '';
   }, 5000);
+}
+
+function showShopModal(d) {
+  document.getElementById('shopItemName').textContent = d.itemName;
+  document.getElementById('shopCostLabel').textContent = d.rstCost + ' RST will be burned from your balance';
+  document.getElementById('shopConfirmBtn').disabled = false;
+  document.getElementById('shopConfirmBtn').textContent = 'CONFIRM \u0026 RECEIVE ITEM';
+  document.getElementById('shopModalStatus').textContent = '';
+  document.getElementById('shopModalStatus').className = 'modal-status';
+  document.getElementById('shopModal').classList.add('show');
+}
+
+function dismissShopModal() {
+  document.getElementById('shopModal').classList.remove('show');
+  shopPurchaseData = null;
+}
+
+async function executeShopConfirm() {
+  if (!shopPurchaseData || !username) return;
+  const d = shopPurchaseData;
+  document.getElementById('shopConfirmBtn').disabled = true;
+  document.getElementById('shopConfirmBtn').textContent = 'CONFIRMING...';
+  document.getElementById('shopModalStatus').textContent = 'Confirming purchase...';
+  document.getElementById('shopModalStatus').className = 'modal-status info';
+  try {
+    const r = await fetch('/shop/confirm-purchase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, nonce: d.nonce })
+    });
+    const result = await r.json();
+    if (result.success) {
+      document.getElementById('shopModalStatus').textContent = 'SUCCESS! Check your in-game inventory!';
+      document.getElementById('shopModalStatus').className = 'modal-status success';
+      document.getElementById('shopConfirmBtn').textContent = 'ITEM DELIVERED!';
+      shopPurchaseData = null;
+      setTimeout(() => { dismissShopModal(); refreshBalance(); }, 3000);
+    } else {
+      document.getElementById('shopModalStatus').textContent = 'Failed: ' + result.message;
+      document.getElementById('shopModalStatus').className = 'modal-status error';
+      document.getElementById('shopConfirmBtn').disabled = false;
+      document.getElementById('shopConfirmBtn').textContent = 'CONFIRM \u0026 RECEIVE ITEM';
+    }
+  } catch(e) {
+    document.getElementById('shopModalStatus').textContent = 'Error: ' + e.message;
+    document.getElementById('shopModalStatus').className = 'modal-status error';
+    document.getElementById('shopConfirmBtn').disabled = false;
+    document.getElementById('shopConfirmBtn').textContent = 'CONFIRM \u0026 RECEIVE ITEM';
+  }
+}
+
+// ─── Admin Panel (deployer-only) ──────────────────────────────────────────────
+
+function checkAdminPanel() {
+  // Only inject if the connected wallet IS the deployer — no hidden elements for anyone else
+  if (!mldsaHash || mldsaHash !== DEPLOYER_ADDRESS) return;
+  if (document.getElementById('adminSection')) return;
+
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+
+  const sec = document.createElement('div');
+  sec.id = 'adminSection';
+  sec.className = 's-section admin-section';
+  sec.innerHTML =
+    '<h3>RST Admin</h3>' +
+    '<div class="stat-row"><span>v2 Contract</span><span style="color:#ff4444;font-size:0.65em;">DEPLOYER</span></div>' +
+    '<button class="admin-btn" id="setMinterBtn" onclick="executeSetMinter()">SET MINTER</button>' +
+    '<button class="admin-btn" id="setLPBtn" onclick="executeSetLPPair()" style="margin-top:6px;">SET LP PAIR</button>' +
+    '<div id="adminStatus" class="modal-status" style="margin-top:8px;font-size:0.72em;min-height:16px;"></div>';
+
+  // Insert before the first .s-section (leaderboard area) so it appears above links
+  const firstSection = sidebar.querySelector('.s-section');
+  if (firstSection) {
+    sidebar.insertBefore(sec, firstSection);
+  } else {
+    sidebar.appendChild(sec);
+  }
+}
+
+function setAdminStatus(msg, type) {
+  const el = document.getElementById('adminStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'modal-status ' + type;
+}
+
+async function executeSetMinter() {
+  if (!wallet) { setAdminStatus('No wallet connected.', 'error'); return; }
+
+  const btn = document.getElementById('setMinterBtn');
+  btn.disabled = true;
+  btn.textContent = 'LOADING...';
+  setAdminStatus('Fetching server minter address...', 'info');
+
+  try {
+    const res = await fetch('/rst/server-address');
+    const { mldsaHash } = await res.json();
+    if (!mldsaHash) { setAdminStatus('Server minter WIF not configured.', 'error'); btn.disabled = false; btn.textContent = 'SET MINTER'; return; }
+
+    const web3 = window.opnet?.web3;
+    if (!web3) { setAdminStatus('OP_WALLET not found.', 'error'); btn.disabled = false; btn.textContent = 'SET MINTER'; return; }
+
+    // setMinter(address) calldata
+    // selector = first 4 bytes of SHA256('setMinter(address)') = 5bf977e4
+    // param    = 32-byte server MLDSA hash
+    const calldata = hexToBytes('5bf977e4' + mldsaHash);
+
+    btn.textContent = 'SIGNING...';
+    setAdminStatus('Server: ' + mldsaHash.slice(0,16) + '...', 'info');
+
+    const utxos = await fetchUTXOs(wallet);
+    if (!utxos.length) {
+      setAdminStatus('No UTXOs found. Fund your deployer wallet.', 'error');
+      btn.disabled = false; btn.textContent = 'SET MINTER'; return;
+    }
+
+    const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
+    const params = { to: RST_V2_CONTRACT, contract: RST_V2_CONTRACT_HEX, calldata, from: wallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: true, revealMLDSAPublicKey: false };
+
+    setAdminStatus('Check OP_WALLET to sign...', 'info');
+    if (typeof web3.signAndBroadcastInteraction === 'function') {
+      await web3.signAndBroadcastInteraction(params);
+    } else {
+      const signed = await web3.signInteraction(params);
+      if (signed.fundingTransaction) await broadcastOpnet(signed.fundingTransaction);
+      await broadcastOpnet(signed.interactionTransaction);
+    }
+
+    setAdminStatus('Minter set! Server can now call grantClaim.', 'success');
+    btn.textContent = 'SET MINTER';
+  } catch (e) {
+    setAdminStatus('Failed: ' + (e.message || String(e)), 'error');
+    btn.disabled = false;
+    btn.textContent = 'SET MINTER';
+  }
+}
+
+async function executeSetLPPair() {
+  if (!wallet) { setAdminStatus('No wallet connected.', 'error'); return; }
+
+  const btn = document.getElementById('setLPBtn');
+  btn.disabled = true;
+  btn.textContent = 'SIGNING...';
+  setAdminStatus('Building transaction...', 'info');
+
+  try {
+    const web3 = window.opnet?.web3;
+    if (!web3) { setAdminStatus('OP_WALLET not found.', 'error'); btn.disabled = false; btn.textContent = 'SET LP PAIR'; return; }
+
+    // setLPPair(address) calldata
+    // selector = first 4 bytes of SHA256('setLPPair(address)') = 78e4405d
+    // param    = 32-byte LP pair contract address (already 32 bytes, no padding needed)
+    const calldata = hexToBytes('78e4405d' + LP_PAIR_ADDRESS);
+
+    setAdminStatus('Fetching UTXOs...', 'info');
+    const utxos = await fetchUTXOs(wallet);
+    if (!utxos.length) {
+      setAdminStatus('No UTXOs found. Fund your deployer wallet.', 'error');
+      btn.disabled = false; btn.textContent = 'SET LP PAIR'; return;
+    }
+
+    const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
+
+    const params = {
+      to: RST_V2_CONTRACT,
+      contract: RST_V2_CONTRACT_HEX,
+      calldata,
+      from: wallet,
+      utxos,
+      feeRate: 10,
+      priorityFee: BigInt(0),
+      gasSatFee: BigInt(20000),
+      network,
+      linkMLDSAPublicKeyToAddress: true,
+      revealMLDSAPublicKey: false,
+    };
+
+    setAdminStatus('Check OP_WALLET to sign...', 'info');
+    if (typeof web3.signAndBroadcastInteraction === 'function') {
+      await web3.signAndBroadcastInteraction(params);
+    } else {
+      const signed = await web3.signInteraction(params);
+      if (signed.fundingTransaction) await broadcastOpnet(signed.fundingTransaction);
+      await broadcastOpnet(signed.interactionTransaction);
+    }
+
+    setAdminStatus('LP pair set! 1% burn mechanic is now active.', 'success');
+    btn.textContent = 'SET LP PAIR';
+  } catch (e) {
+    setAdminStatus('Failed: ' + (e.message || String(e)), 'error');
+    btn.disabled = false;
+    btn.textContent = 'SET LP PAIR';
+  }
 }
 
 async function fetchLeaderboard() {

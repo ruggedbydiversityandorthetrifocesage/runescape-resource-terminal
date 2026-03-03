@@ -1,3 +1,4 @@
+import ObjType from '#/cache/config/ObjType.js';
 import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import Npc from '#/engine/entity/Npc.js';
 import * as fs from 'node:fs';
@@ -10,8 +11,12 @@ import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } fr
 // OPNet OP20 token bridge
 // Paste the deployed tb1p... contract address below:
 // ============================================================
-export const RST_CONTRACT = 'opt1sqqsrj9ex92gwjwus3ufz60nclkdgzdtgnqkv9ya8';
-export const RST_GP_PER_TOKEN = 10000; // 10,000 GP = 1 RST
+export const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
+export const RST_GP_PER_TOKEN = 1000; // 1,000 GP = 1 RST
+
+// Cow NPC type IDs: 81=cow, 397=cow2, 955=cow3
+export const COW_NPC_IDS = new Set([81, 397, 955]);
+export const COW_KILL_GP = 100; // 0.1 RST per cow kill (at 1,000 GP/RST)
 
 const RESOURCE_PRICES: Record<number, number> = {
     // Logs
@@ -39,14 +44,21 @@ export const RST_MERCHANT_NPC_IDS = new Set([516, 520, 521, 522, 523, 524, 525, 
 
 export const walletRegistry = new Map<string, string>();
 export const mldsaRegistry = new Map<string, string>();     // username -> raw MLDSA public key hex
-export const pendingGP = new Map<string, number>();         // GP accumulated but not yet minted
+export const pendingGP = new Map<string, number>();         // GP accumulated but not yet granted on-chain
+export const grantedGP = new Map<string, number>();         // GP granted on-chain but not yet claimed by player
 export const totalGPConverted = new Map<string, number>();  // all-time leaderboard score
 
 // SSE push: engine signals the browser tab when a mint is ready
 export const sseClients = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
 
+// Per-player grantClaim cooldown — prevents UTXO chaining on rapid sales
+// Only one grantClaim per player per 3 minutes; GP accumulates in between
+const GRANT_COOLDOWN_MS = 3 * 60 * 1000;
+const lastGrantTime = new Map<string, number>();
+
 const LEADERBOARD_PATH = 'data/rst-leaderboard.json';
 const PENDING_PATH = 'data/rst-pending.json';
+const GRANTED_PATH = 'data/rst-granted.json';
 const WALLETS_PATH = 'data/rst-wallets.json';
 const MLDSA_PATH = 'data/rst-mldsa.json';
 const encoder = new TextEncoder();
@@ -72,6 +84,11 @@ function loadLeaderboard(): void {
             const data = JSON.parse(fs.readFileSync(MLDSA_PATH, 'utf-8'));
             for (const [k, v] of Object.entries(data)) mldsaRegistry.set(k, v as string);
             console.log('[RST] MLDSA keys loaded: ' + mldsaRegistry.size + ' entries');
+        }
+        if (fs.existsSync(GRANTED_PATH)) {
+            const data = JSON.parse(fs.readFileSync(GRANTED_PATH, 'utf-8'));
+            for (const [k, v] of Object.entries(data)) grantedGP.set(k, v as number);
+            console.log('[RST] Granted GP loaded: ' + grantedGP.size + ' entries');
         }
     } catch {}
 }
@@ -104,6 +121,22 @@ export function saveMldsa(): void {
     } catch {}
 }
 
+export function saveGranted(): void {
+    try {
+        fs.mkdirSync(path.dirname(GRANTED_PATH), { recursive: true });
+        fs.writeFileSync(GRANTED_PATH, JSON.stringify(Object.fromEntries(grantedGP)));
+    } catch {}
+}
+
+export function awardCowKillGP(username: string): void {
+    const prev = pendingGP.get(username) ?? 0;
+    pendingGP.set(username, prev + COW_KILL_GP);
+    const prevTotal = totalGPConverted.get(username) ?? 0;
+    totalGPConverted.set(username, prevTotal + COW_KILL_GP);
+    savePending();
+    saveLeaderboard();
+}
+
 loadLeaderboard();
 
 export function getLeaderboard(): Array<{ username: string; gp: number; rst: number }> {
@@ -130,7 +163,14 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     for (let slot = 0; slot < inv.capacity; slot++) {
         const item = inv.get(slot);
         if (!item) continue;
-        const price = (RESOURCE_PRICES as any)[item.id];
+        // Check unnoted price first, then fall back to noted (certlink = unnoted item id)
+        let price = (RESOURCE_PRICES as any)[item.id];
+        if (!price) {
+            const objType = ObjType.get(item.id);
+            if (objType && objType.certtemplate !== -1 && objType.certlink !== -1) {
+                price = (RESOURCE_PRICES as any)[objType.certlink];
+            }
+        }
         if (price) { saleGP += price * item.count; remove.push(slot); }
     }
 
@@ -142,7 +182,7 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
             setTutorialStep(player.username, 0);
         }
         player.messageGame('Runescape Resource Terminal: Bring logs or ores to convert!');
-        player.messageGame('10,000 GP = 1 RST  |  1,000 GP = 0.1 RST  |  100 GP = 0.01 RST');
+        player.messageGame('1,000 GP = 1 RST  |  100 GP = 0.1 RST  |  10 GP = 0.01 RST');
         return true;
     }
 
@@ -160,7 +200,13 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     savePending();
 
     const rstValue = (newPending / RST_GP_PER_TOKEN).toFixed(4);
-    player.messageGame('Sold for ' + saleGP + ' GP! Total: ' + newPending + ' GP = ' + rstValue + ' RST');
+    const totalGrantedAtSale = grantedGP.get(player.username) ?? 0;
+    if (totalGrantedAtSale > 0) {
+        const combinedRST = ((newPending + totalGrantedAtSale) / RST_GP_PER_TOKEN).toFixed(4);
+        player.messageGame('Sold for ' + saleGP + ' GP! Pending: ' + rstValue + ' RST + On-chain: ' + (totalGrantedAtSale / RST_GP_PER_TOKEN).toFixed(4) + ' RST = ' + combinedRST + ' RST total');
+    } else {
+        player.messageGame('Sold for ' + saleGP + ' GP! Total: ' + newPending + ' GP = ' + rstValue + ' RST');
+    }
 
     // Tutorial progression
     const tStep = getTutorialStep(player.username);
@@ -168,7 +214,7 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
         // First sale — tutorial complete, clear hint
         setTutorialStep(player.username, 2);
         player.stopHint();
-        player.messageGame('You sold your resources! Visit /play in your browser to mint your RST tokens!');
+        player.messageGame('You sold your resources! Visit /play in your browser to claim your RST tokens!');
     }
 
     if (newPending < 10) {
@@ -182,42 +228,58 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
         return true;
     }
 
-    if (false && isMintConfigured()) {
-        // Server auto-mint disabled — protocol rejects constructed addresses for wallets
-        // with prior OPNet history. Browser-side signing via OP_WALLET is the correct path.
-        player.messageGame('Auto-minting ' + rstValue + ' RST to your wallet...');
+    if (isMintConfigured()) {
+        // Cooldown check — don't fire grantClaim again if one is still likely unconfirmed
+        const now = Date.now();
+        const lastGrant = lastGrantTime.get(player.username) ?? 0;
+        if (now - lastGrant < GRANT_COOLDOWN_MS) {
+            const secsLeft = Math.ceil((GRANT_COOLDOWN_MS - (now - lastGrant)) / 1000);
+            const totalGrantedCooldown = grantedGP.get(player.username) ?? 0;
+            const totalRSTCooldown = ((newPending + totalGrantedCooldown) / RST_GP_PER_TOKEN).toFixed(4);
+            player.messageGame('GP banked! ' + totalRSTCooldown + ' RST total. Next grant in ~' + secsLeft + 's.');
+            return true;
+        }
+        lastGrantTime.set(player.username, now);
+        // Server calls grantClaim(playerMldsaHash, rstWei) on the v2 contract.
+        // Player then claims from browser via claim(amount).
+        player.messageGame('Granting ' + rstValue + ' RST — sign at /play to claim!');
         const gpSnapshot = newPending;
         const mldsaKey = mldsaRegistry.get(player.username);
+        const rstWei = (BigInt(Math.floor(gpSnapshot)) * (10n ** 18n) / BigInt(RST_GP_PER_TOKEN)).toString();
+        // Push minting_started IMMEDIATELY so browser locks button before TX is in flight
+        const ctrlEarly = sseClients.get(player.username);
+        if (ctrlEarly) {
+            try {
+                ctrlEarly.enqueue(encoder.encode('data: ' + JSON.stringify({
+                    type: 'minting_started',
+                    username: player.username,
+                    gpAmount: gpSnapshot,
+                    rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
+                    rstWei,
+                }) + '\n\n'));
+            } catch { sseClients.delete(player.username); }
+        }
         mintRST(player.username, wallet, gpSnapshot, mldsaKey).then(success => {
+            const ctrl = sseClients.get(player.username);
             if (success) {
+                const prevGranted = grantedGP.get(player.username) ?? 0;
+                grantedGP.set(player.username, prevGranted + gpSnapshot);
+                saveGranted();
                 pendingGP.delete(player.username);
                 savePending();
-                // Push success SSE so /play tab shows banner
-                const ctrl = sseClients.get(player.username);
-                if (ctrl) {
-                    try {
-                        ctrl.enqueue(encoder.encode('data: ' + JSON.stringify({
-                            type: 'minted',
-                            rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
-                        }) + '\n\n'));
-                    } catch { sseClients.delete(player.username); }
-                }
-            } else {
-                // Mint failed — fall back to manual signing via SSE
-                const ctrl = sseClients.get(player.username);
-                if (ctrl) {
-                    const rstWei = (BigInt(Math.floor(gpSnapshot)) * (10n ** 18n) / BigInt(RST_GP_PER_TOKEN)).toString();
-                    try {
-                        ctrl.enqueue(encoder.encode('data: ' + JSON.stringify({
-                            type: 'mint_ready',
-                            username: player.username,
-                            wallet,
-                            gpAmount: gpSnapshot,
-                            rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
-                            rstWei,
-                        }) + '\n\n'));
-                    } catch { sseClients.delete(player.username); }
-                }
+            }
+            // Whether grant succeeded or failed, push mint_ready so the player can claim from browser
+            if (ctrl) {
+                try {
+                    ctrl.enqueue(encoder.encode('data: ' + JSON.stringify({
+                        type: 'mint_ready',
+                        username: player.username,
+                        wallet,
+                        gpAmount: gpSnapshot,
+                        rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
+                        rstWei,
+                    }) + '\n\n'));
+                } catch { sseClients.delete(player.username); }
             }
         });
     } else {

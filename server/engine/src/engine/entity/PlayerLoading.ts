@@ -4,7 +4,6 @@ import InvType from '#/cache/config/InvType.js';
 import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import Player, { getExpByLevel, getLevelByExp } from '#/engine/entity/Player.js';
 import { PlayerStat } from '#/engine/entity/PlayerStat.js';
-import { setTutorialStep } from '#/engine/pill/TutorialTracker.js';
 import World from '#/engine/World.js';
 import Packet from '#/io/Packet.js';
 import ClientSocket from '#/server/ClientSocket.js';
@@ -51,15 +50,15 @@ export class PlayerLoading {
             player.baseLevels[PlayerStat.HITPOINTS] = 10;
             player.levels[PlayerStat.HITPOINTS] = 10;
 
-            // PILL WOODCUTTER: spawn in Draynor forest with bronze axe
-            player.x = 3097;
-            player.z = 3277;
+            // RST: spawn in Lumbridge with bronze axe
+            player.x = 3222;
+            player.z = 3219;
             player.level = 0;
             const startInv = player.getInventory(93);
             if (startInv) { startInv.set(0, { id: 1351, count: 1 }); }
 
-            // Mark as new player so tutorial hint arrows activate on first login
-            setTutorialStep(safeName, 0);
+            // Flag so the main World thread sets up tutorial on first login
+            player.tutorialNew = true;
 
             return player;
         }

@@ -33,6 +33,8 @@ import VarSharedType from '#/cache/config/VarSharedType.js';
 import { CrcBuffer32, makeCrcs } from '#/cache/CrcTable.js';
 import WordEnc from '#/cache/wordenc/WordEnc.js';
 import { BlockWalk } from '#/engine/entity/BlockWalk.js';
+import { MoveRestrict } from '#/engine/entity/MoveRestrict.js';
+import { NpcMode } from '#/engine/entity/NpcMode.js';
 import { EntityLifeCycle } from '#/engine/entity/EntityLifeCycle.js';
 import { NpcList, PlayerList } from '#/engine/entity/EntityList.js';
 import { PlayerTimerType } from '#/engine/entity/EntityTimer.js';
@@ -58,7 +60,9 @@ import ScriptRunner from '#/engine/script/ScriptRunner.js';
 import ScriptState from '#/engine/script/ScriptState.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import { WorldStat } from '#/engine/WorldStat.js';
-import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from '#/engine/pill/TutorialTracker.js';
+import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, tutorialRemindTick, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from '#/engine/pill/TutorialTracker.js';
+import { awardCowKillGP, COW_NPC_IDS } from '#/engine/pill/PillMerchant.js';
+import { broadcastRSTShop, setRSTBrokerNpc } from '#/engine/pill/RSTShop.js';
 import Zone from '#/engine/zone/Zone.js';
 import Isaac from '#/io/Isaac.js';
 import Packet from '#/io/Packet.js';
@@ -325,6 +329,19 @@ class World {
 
             if (!skipMaps) {
                 this.gameMap.init();
+
+                // Spawn RST Broker NPC in front of Lumbridge Castle (x=3209, z=3217)
+                // MoveRestrict.NOMOVE + NpcMode.NONE = fully stationary, never wanders
+                try {
+                    const brokerNpcType = NpcType.get(741);
+                    const brokerNpc = new Npc(0, 3209, 3217, brokerNpcType.size, brokerNpcType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), 741, MoveRestrict.NOMOVE, brokerNpcType.blockwalk);
+                    brokerNpc.targetOp = NpcMode.NONE;
+                    this.addNpc(brokerNpc, -1);
+                    setRSTBrokerNpc(brokerNpc);
+                    printInfo('[RST] Broker NPC spawned at (3209, 3217)');
+                } catch (err) {
+                    printError('[RST] Failed to spawn broker NPC: ' + err);
+                }
             }
         }
 
@@ -403,6 +420,11 @@ class World {
             // - movement
             // - close interface if attempting to logout
             this.processPlayers();
+
+            // RST Shop broadcast every 50 ticks (~30 seconds) — NPC say() bubble
+            if (this.currentTick > 0 && this.currentTick % 50 === 0) {
+                broadcastRSTShop();
+            }
 
             // player logout
             this.processLogouts();
@@ -774,10 +796,22 @@ class World {
                             if (item && RESOURCE_ITEM_IDS.has(item.id)) {
                                 setTutorialStep(player.username, 1);
                                 player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
-                                player.messageGame('Great job! Now head to the Lumbridge General Store and sell your logs!');
+                                player.messageGame('Great job! Now sell your logs at the Lumbridge General Store just north of you!');
+                                // Schedule a reminder 8 ticks later (~5s) in case a level-up dialog hid the message
+                                tutorialRemindTick.set(player.username, this.currentTick + 8);
                                 break;
                             }
                         }
+                    }
+                }
+
+                // Tutorial step 1: re-fire reminder after dialog dismissal
+                if (getTutorialStep(player.username) === 1) {
+                    const remindAt = tutorialRemindTick.get(player.username);
+                    if (remindAt !== undefined && this.currentTick >= remindAt) {
+                        tutorialRemindTick.delete(player.username);
+                        player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
+                        player.messageGame('Sell your logs at the Lumbridge General Store just north of you!');
                     }
                 }
             } catch (err) {
@@ -1018,13 +1052,17 @@ class World {
             player.onLogin();
 
             // Tutorial hint arrows for new players
+            // tutorialNew is set on the player object in the login worker thread,
+            // so we read it here in the main thread and register in our Map
+            if (player.tutorialNew) {
+                setTutorialStep(player.username, 0);
+                player.tutorialNew = false;
+            }
             const tStep = getTutorialStep(player.username);
             if (tStep === 0) {
-                // Brand new player: point to Draynor tree cluster + welcome message
                 player.hintTile(2, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, 0);
-                player.messageGame('Welcome! Follow the arrow on your map to cut some logs!');
+                player.messageGame('Welcome to Lumbridge! Follow the arrow to chop some logs!');
             } else if (tStep === 1) {
-                // Has logs: point to Lumbridge General Store
                 player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
             }
 
@@ -1403,6 +1441,18 @@ class World {
         const adjustedDuration = this.scaleByPlayerCount(duration);
         zone.leave(npc);
         npc.isActive = false;
+
+        // Cow kill RST reward: award 0.1 RST (100 GP) to the killing player
+        if (duration > -1 && COW_NPC_IDS.has(npc.type)) {
+            const killerHash = npc.heroPoints.findHero();
+            if (killerHash !== -1n) {
+                const killer = this.getPlayerByHash64(killerHash);
+                if (killer) {
+                    awardCowKillGP(killer.username);
+                    killer.messageGame('Cow killed! +100 GP RST reward added to your balance.');
+                }
+            }
+        }
 
         switch (npc.blockWalk) {
             case BlockWalk.NPC:

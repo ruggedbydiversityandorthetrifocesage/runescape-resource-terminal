@@ -10,6 +10,22 @@ import { trackLoginAttempts, trackLoginTime } from './LoginMetrics.js';
 
 const client = new LoginClient(Environment.NODE_ID);
 
+// Admin accounts — listed one username per line in data/admins.txt
+// These players receive staffModLevel 3 (full cheat access) on login.
+function getAdminLevel(username: string): number {
+    try {
+        const path = 'data/admins.txt';
+        if (fs.existsSync(path)) {
+            const admins = fs.readFileSync(path, 'utf-8')
+                .split('\n')
+                .map(u => u.trim().toLowerCase())
+                .filter(u => u.length > 0);
+            if (admins.includes(username.toLowerCase())) return 3;
+        }
+    } catch {}
+    return 0;
+}
+
 if (Environment.STANDALONE_BUNDLE) {
     self.onmessage = async msg => {
         try {
@@ -71,7 +87,7 @@ async function handleRequests(parentPort: ParentPort, msg: any) {
                 });
                 stopTimer();
             } else {
-                const staffmodlevel = 0;
+                const staffmodlevel = getAdminLevel(username);
 
                 const profile = Environment.NODE_PROFILE;
                 if (!fs.existsSync(`data/players/${profile}`)) {

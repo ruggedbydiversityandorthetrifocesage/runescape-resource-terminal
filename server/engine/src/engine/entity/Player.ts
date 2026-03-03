@@ -331,6 +331,8 @@ export default class Player extends PathingEntity {
     requestLogout: boolean = false;
     requestIdleLogout: boolean = false;
     loggingOut: boolean = false;
+
+    tutorialNew: boolean = false; // set in PlayerLoading for brand new characters
     preventLogoutMessage: string | null = null;
     preventLogoutUntil: number = -1;
 

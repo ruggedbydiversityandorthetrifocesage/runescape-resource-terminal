@@ -9,6 +9,7 @@ import ClientGameMessageHandler from '#/network/game/client/ClientGameMessageHan
 import OpNpc from '#/network/game/client/model/OpNpc.js';
 import UnsetMapFlag from '#/network/game/server/model/UnsetMapFlag.js';
 import { PILL_MERCHANT_NPC_IDS, handlePillMerchant } from '#/engine/pill/PillMerchant.js';
+import { RST_SHOP_NPC_IDS, handleRSTShop } from '#/engine/pill/RSTShop.js';
 
 export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
     handle(message: OpNpc, player: NetworkPlayer): boolean {
@@ -34,6 +35,11 @@ export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
 
         if (PILL_MERCHANT_NPC_IDS.has(npc.type)) {
             handlePillMerchant(player, npc);
+            return true;
+        }
+
+        if (RST_SHOP_NPC_IDS.has(npc.type)) {
+            handleRSTShop(player, npc);
             return true;
         }
 

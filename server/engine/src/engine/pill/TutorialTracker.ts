@@ -13,6 +13,9 @@
 
 export const tutorialStep = new Map<string, number>();
 
+// Tick at which to re-send the "head east" reminder (clears after firing)
+export const tutorialRemindTick = new Map<string, number>();
+
 export function getTutorialStep(username: string): number {
     return tutorialStep.get(username) ?? -1; // -1 = existing player, skip tutorial
 }
@@ -21,9 +24,9 @@ export function setTutorialStep(username: string, step: number): void {
     tutorialStep.set(username, step);
 }
 
-// Draynor forest tree cluster (south of spawn at 3097, 3277)
-export const TUTORIAL_TREE_X = 3090;
-export const TUTORIAL_TREE_Z = 3265;
+// Tree right next to Lumbridge General Store — chop here, sell right there
+export const TUTORIAL_TREE_X = 3213;
+export const TUTORIAL_TREE_Z = 3238;
 
 // Lumbridge General Store (NPC 520/521)
 export const TUTORIAL_STORE_X = 3213;
