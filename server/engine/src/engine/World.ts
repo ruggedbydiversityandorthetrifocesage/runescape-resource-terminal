@@ -1051,6 +1051,14 @@ class World {
             this.gameMap.getZone(player.x, player.z, player.level).enter(player);
             player.onLogin();
 
+            // PILL: skip tutorial island equip block — set %tutorial past combat instructor stage
+            {
+                const tutorialVarp = VarPlayerType.getByName('tutorial');
+                if (tutorialVarp && player.vars[tutorialVarp.id] < 380) {
+                    player.setVar(tutorialVarp.id, 380);
+                }
+            }
+
             // Tutorial hint arrows for new players
             // tutorialNew is set on the player object in the login worker thread,
             // so we read it here in the main thread and register in our Map
