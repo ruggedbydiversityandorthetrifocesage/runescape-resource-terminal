@@ -173,7 +173,8 @@ export async function mintRST(username: string, recipientBech32m: string, gpAmou
 
         if (!receipt || 'error' in receipt) throw new Error('grantClaim transaction rejected: ' + JSON.stringify(receipt));
 
-        console.log('[RST] ✅ grantClaim ' + rstDisplay + ' RST to ' + username + ' (' + recipientBech32m.slice(0, 12) + '...)');
+        const txid = (receipt as any).txid ?? (receipt as any).hash ?? (receipt as any).id ?? JSON.stringify(receipt).slice(0, 120);
+        console.log('[RST] ✅ grantClaim ' + rstDisplay + ' RST to ' + username + ' (' + recipientBech32m.slice(0, 12) + '...) txid=' + txid);
         return true;
     } catch (e: unknown) {
         console.error('[RST] ❌ grantClaim failed for ' + username + ':', e instanceof Error ? e.message : String(e));
@@ -185,4 +186,43 @@ export async function mintRST(username: string, recipientBech32m: string, gpAmou
 
 export function isMintConfigured(): boolean {
     return !!process.env.RST_MINTER_WIF;
+}
+
+const OPNET_RPC = 'https://testnet.opnet.org/api/v1/json-rpc';
+
+/**
+ * Fetch on-chain RST balance for a player, identified by their raw MLDSA public key hex.
+ * Returns balance as a float (e.g. 2.12). Returns 0 on any error.
+ */
+export async function fetchRSTBalance(mldsaPublicKeyHex: string): Promise<number> {
+    try {
+        const mldsaHash = createHash('sha256')
+            .update(Buffer.from(mldsaPublicKeyHex.replace(/^0x/, ''), 'hex'))
+            .digest('hex');
+        // balanceOf(address) selector: 5b46f8f6
+        const calldata = '5b46f8f6' + mldsaHash.padStart(64, '0');
+        const res = await fetch(OPNET_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params: [RST_CONTRACT_ADDR, calldata, null, null] }),
+        });
+        const json = await res.json() as any;
+        // btc_call response: { result: { result: "<base64>", events: {}, ... } }
+        const rpcResult = json?.result;
+        const raw: string = typeof rpcResult === 'string' ? rpcResult : (rpcResult?.result ?? rpcResult?.data ?? rpcResult?.output ?? '');
+        if (!raw) return 0;
+        // Decode: may be base64 or hex
+        let hexStr = '';
+        if (raw.startsWith('0x')) {
+            hexStr = raw.slice(2);
+        } else if (/^[0-9a-fA-F]+$/.test(raw)) {
+            hexStr = raw;
+        } else {
+            hexStr = Buffer.from(raw, 'base64').toString('hex');
+        }
+        if (hexStr.length < 64) return 0;
+        return Number(BigInt('0x' + hexStr.slice(0, 64))) / 1e18;
+    } catch {
+        return 0;
+    }
 }

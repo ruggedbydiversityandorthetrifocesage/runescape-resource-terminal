@@ -21,3 +21,6 @@ bots/*/
 # SDK is copied into Docker via Dockerfile; don't duplicate it under server/
 server/sdk/
 jobs/
+
+# RST runtime data — never overwrite live player data on deploy
+server/engine/data/rst-*.json

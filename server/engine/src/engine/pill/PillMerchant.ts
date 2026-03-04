@@ -3,7 +3,7 @@ import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import Npc from '#/engine/entity/Npc.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { mintRST, isMintConfigured } from './RSTMinter.js';
+import { mintRST, isMintConfigured, fetchRSTBalance } from './RSTMinter.js';
 import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from './TutorialTracker.js';
 
 // ============================================================
@@ -138,6 +138,36 @@ export function awardCowKillGP(username: string): void {
 }
 
 loadLeaderboard();
+
+// ============================================================
+// RST balance cache — used by BoundaryCheck for world gating
+// Tier 0: 0 RST    → Misthalin only
+// Tier 1: 1-9 RST  → +Wilderness, Asgarnia
+// Tier 2: 10+ RST  → full world
+// ============================================================
+export const rstBalanceCache = new Map<string, number>(); // username → RST balance
+
+export function getPlayerRSTTier(username: string): 0 | 1 | 2 {
+    const bal = rstBalanceCache.get(username) ?? 0;
+    if (bal >= 1000) return 2;
+    if (bal >= 10) return 1;
+    return 0;
+}
+
+async function refreshRSTBalances(): Promise<void> {
+    for (const [username, mldsaKey] of mldsaRegistry) {
+        try {
+            const bal = await fetchRSTBalance(mldsaKey);
+            rstBalanceCache.set(username, bal);
+        } catch {}
+    }
+}
+
+// Initial fetch after a short delay, then every 60s
+setTimeout(() => {
+    void refreshRSTBalances();
+    setInterval(() => { void refreshRSTBalances(); }, 60_000);
+}, 5_000);
 
 export function getLeaderboard(): Array<{ username: string; gp: number; rst: number }> {
     return Array.from(totalGPConverted.entries())

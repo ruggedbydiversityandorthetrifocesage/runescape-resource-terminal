@@ -262,6 +262,17 @@ function showStatus(msg, type) {
             }
 
             // RST: Balance check
+            if (url.pathname === '/rst/debug/tier') {
+                const username = url.searchParams.get('username')?.toLowerCase() ?? '';
+                const { rstBalanceCache, getPlayerRSTTier, mldsaRegistry } = await import('../engine/pill/PillMerchant.js');
+                const bal = rstBalanceCache.get(username) ?? -1;
+                const tier = getPlayerRSTTier(username);
+                const hasMldsa = mldsaRegistry.has(username);
+                return new Response(JSON.stringify({ username, cachedBalance: bal, tier, hasMldsa }), {
+                    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                });
+            }
+
             if (url.pathname === '/rst/balance') {
                 const username = url.searchParams.get('username')?.toLowerCase() ?? '';
                 const { pendingGP, grantedGP, totalGPConverted, walletRegistry } = await import('../engine/pill/PillMerchant.js');
@@ -486,11 +497,13 @@ button.conn-btn:hover { background: #243300; }
       <div class="stat-row"><span>RST Mempool</span><span id="statRSTMempool">0.0000 RST</span></div>
       <div class="stat-row"><span>RST Balance</span><span id="statRSTBal">-</span></div>
       <div class="stat-row"><span>tBTC Balance</span><span id="statBTC">-</span></div>
+      <div class="stat-row" style="margin-top:6px;border-top:1px solid #2a2000;padding-top:6px">
+        <span>Difficulty</span>
+        <span id="statDifficulty" style="font-weight:bold;color:#ff4444">EXTREMELY HARDCORE</span>
+      </div>
+      <div id="statDifficultyHint" style="font-size:0.68em;color:#666;margin-bottom:4px;text-align:right">Earn 10 RST to reduce</div>
       <button class="claim-btn" id="claimBtn" onclick="openClaimModal()" disabled>CLAIM RST</button>
       <button class="claim-btn" style="background:#1a1a1a;color:#666;border:1px solid #333;margin-top:4px;" onclick="disconnectWallet()">Disconnect</button>
-      <div style="margin-top:10px;padding:8px;background:#0a1a0a;border:1px solid #1a4a1a;border-radius:4px;font-size:0.72em;color:#5a9a5a;line-height:1.5;">
-        &#x231B; On-chain grants take <strong>1&ndash;3 min</strong> to confirm on testnet &mdash; this is normal. RST Mempool updates automatically when ready.
-      </div>
     </div>
     <!-- Leaderboard -->
     <div class="s-section">
@@ -563,12 +576,15 @@ button.conn-btn:hover { background: #243300; }
 <!-- Mint Modal -->
 <div class="modal-bg" id="mintModal">
   <div class="modal-box">
-    <h2>&#x26CF; RST CLAIM READY</h2>
+    <h2 id="mintModalTitle">&#x26CF; RST CLAIM READY</h2>
     <div class="modal-amt"><span id="mintAmt">0</span><span class="modal-unit"> RST</span></div>
     <div class="modal-sub" id="mintSub">Sign to receive your tokens!</div>
     <button class="sign-btn" id="signBtn" onclick="executeMint()">SIGN &amp; CLAIM WITH OP_WALLET</button>
-    <button class="dismiss-btn" onclick="dismissModal()">Claim later at /rst/claim</button>
+    <button class="dismiss-btn" onclick="dismissModal()">Dismiss</button>
     <div id="modalStatus" class="modal-status"></div>
+    <div id="modalTimingNote" style="display:none;margin-top:10px;padding:8px;background:#0a1a0a;border:1px solid #1a4a1a;border-radius:4px;font-size:0.72em;color:#5a9a5a;line-height:1.5;">
+      &#x231B; On-chain grants take <strong>1&ndash;3 min</strong> to confirm on testnet &mdash; this is normal. The Sign button unlocks automatically.
+    </div>
   </div>
 </div>
 <script>
@@ -779,7 +795,11 @@ async function refreshBalance() {
       if (claimBtnR) { claimBtnR.disabled = false; claimBtnR.textContent = 'CLAIM RST'; }
     } else {
       const claimBtnR = document.getElementById('claimBtn');
-      if (claimBtnR && mintState === 'idle') claimBtnR.disabled = false;
+      // Only enable if there's actually something pending or in mempool — never enable when nothing to claim
+      if (claimBtnR && mintState === 'idle') {
+        claimBtnR.disabled = (serverPendingRst <= 0 && mempoolDisplay <= 0);
+        if (!claimBtnR.disabled) claimBtnR.textContent = 'CLAIM RST';
+      }
     }
   } catch {}
 }
@@ -869,12 +889,34 @@ async function refreshWalletBalances() {
       }
       if (hexStr.length >= 64) {
         const rstWei = BigInt('0x' + hexStr.slice(0, 64));
-        document.getElementById('statRSTBal').textContent = (Number(rstWei) / 1e18).toFixed(4) + ' RST';
+        const rstBal = Number(rstWei) / 1e18;
+        document.getElementById('statRSTBal').textContent = rstBal.toFixed(4) + ' RST';
+        updateDifficultyDisplay(rstBal);
       } else {
         document.getElementById('statRSTBal').textContent = '0.0000 RST';
+        updateDifficultyDisplay(0);
       }
     }
   } catch(e) { console.error('[RST] btc_call error:', e); document.getElementById('statRSTBal').textContent = '?'; }
+}
+
+function updateDifficultyDisplay(rstBal) {
+  const el = document.getElementById('statDifficulty');
+  const hint = document.getElementById('statDifficultyHint');
+  if (!el || !hint) return;
+  if (rstBal >= 1000) {
+    el.textContent = 'NORMAL';
+    el.style.color = '#90ee90';
+    hint.textContent = 'Full world unlocked';
+  } else if (rstBal >= 10) {
+    el.textContent = 'HARD MODE';
+    el.style.color = '#ff8c00';
+    hint.textContent = 'Earn 1,000 RST for full world';
+  } else {
+    el.textContent = 'EXTREMELY HARDCORE';
+    el.style.color = '#ff4444';
+    hint.textContent = 'Earn 10 RST to reduce difficulty';
+  }
 }
 
 const MINT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
@@ -947,6 +989,11 @@ async function pollClaimableUntilReady() {
           mintState = 'ready_to_sign';
           // Update button — CLAIM RST is clickable (grantClaim confirmed, ready for claim())
           if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
+          // Update modal title to reflect confirmed state
+          const titleEl = document.getElementById('mintModalTitle');
+          if (titleEl) titleEl.textContent = '\u26CF RST CLAIM READY';
+          const timingNote = document.getElementById('modalTimingNote');
+          if (timingNote) timingNote.style.display = 'none';
           // Update displays
           const rstMempoolEl = document.getElementById('statRSTMempool');
           if (rstMempoolEl) rstMempoolEl.textContent = claimableRst.toFixed(4) + ' RST';
@@ -966,12 +1013,14 @@ async function pollClaimableUntilReady() {
 }
 
 function showMintModal(d) {
+  document.getElementById('mintModalTitle').textContent = '\u23F3 GRANTING RST...';
   document.getElementById('mintAmt').textContent = (d.rstAmount || 0).toFixed(4);
-  document.getElementById('mintSub').textContent = 'Sold resources for ' + (d.gpAmount || 0).toLocaleString() + ' GP. Sign to claim!';
+  document.getElementById('mintSub').textContent = 'Sold resources for ' + (d.gpAmount || 0).toLocaleString() + ' GP. Confirming on-chain...';
   // Always start with Sign disabled — poll claimableOf until grantClaim is confirmed on-chain.
   // This prevents claim() racing grantClaim into the same block ("Insufficient claim allowance").
   document.getElementById('signBtn').disabled = true;
   document.getElementById('signBtn').textContent = 'WAITING FOR CONFIRMATION...';
+  document.getElementById('modalTimingNote').style.display = 'block';
   setModalStatus('grantClaim is confirming on-chain (~1-2 min). Sign will unlock automatically.', 'info');
   document.getElementById('mintModal').classList.add('show');
   pollClaimableUntilReady();
@@ -987,10 +1036,12 @@ async function openClaimModal() {
     const displayWei = freshClaimable > 0n ? freshClaimable.toString() : (mintData?.rstWei || '0');
     if (!mintData) mintData = { rstAmount: displayAmt, rstWei: displayWei, gpAmount: Math.round(displayAmt * 1000), wallet };
     else { mintData.rstAmount = displayAmt; mintData.rstWei = displayWei; }
+    document.getElementById('mintModalTitle').textContent = '\u26CF RST CLAIM READY';
     document.getElementById('mintAmt').textContent = displayAmt.toFixed(4);
     document.getElementById('mintSub').textContent = 'Total claimable: ' + displayAmt.toFixed(4) + ' RST. Sign to receive!';
     document.getElementById('signBtn').disabled = false;
     document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+    document.getElementById('modalTimingNote').style.display = 'none';
     setModalStatus('Confirmed on-chain! Sign to receive your RST.', 'success');
     document.getElementById('mintModal').classList.add('show');
     return;
@@ -1011,10 +1062,12 @@ async function openClaimModal() {
         const claimableRst = Number(claimable) / 1e18;
         mintData = { rstWei: claimable.toString(), rstAmount: claimableRst, gpAmount: Math.round(claimableRst * 1000), wallet };
         mintState = 'ready_to_sign';
+        document.getElementById('mintModalTitle').textContent = '\u26CF RST CLAIM READY';
         document.getElementById('mintAmt').textContent = claimableRst.toFixed(4);
         document.getElementById('mintSub').textContent = 'RST confirmed on-chain. Sign to receive!';
         document.getElementById('signBtn').disabled = false;
         document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+        document.getElementById('modalTimingNote').style.display = 'none';
         setModalStatus('Confirmed on-chain! Sign to receive your RST.', 'success');
         document.getElementById('mintModal').classList.add('show');
         const claimBtn = document.getElementById('claimBtn');
@@ -1134,7 +1187,7 @@ async function executeMint() {
     mintData = null;
     document.getElementById('signBtn').textContent = 'CLAIMED!';
     const claimBtnDone = document.getElementById('claimBtn');
-    if (claimBtnDone) { claimBtnDone.textContent = 'CLAIM RST'; claimBtnDone.disabled = false; }
+    if (claimBtnDone) { claimBtnDone.textContent = 'CLAIM RST'; claimBtnDone.disabled = true; }
     setTimeout(() => { dismissModal(); refreshBalance(); refreshWalletBalances(); fetchLeaderboard(); }, 3000);
   } catch(e) {
     console.error('[RST] executeMint error:', e);
