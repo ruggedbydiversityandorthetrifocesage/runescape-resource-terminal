@@ -1051,11 +1051,11 @@ class World {
             this.gameMap.getZone(player.x, player.z, player.level).enter(player);
             player.onLogin();
 
-            // PILL: skip tutorial island equip block — set %tutorial past combat instructor stage
+            // PILL: skip all tutorial island logic — set %tutorial past the highest step (670)
             {
                 const tutorialVarp = VarPlayerType.getByName('tutorial');
-                if (tutorialVarp && player.vars[tutorialVarp.id] < 380) {
-                    player.setVar(tutorialVarp.id, 380);
+                if (tutorialVarp && player.vars[tutorialVarp.id] < 1000) {
+                    player.setVar(tutorialVarp.id, 1000);
                 }
             }
 

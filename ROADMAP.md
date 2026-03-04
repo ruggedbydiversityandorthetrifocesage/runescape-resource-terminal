@@ -106,6 +106,32 @@
 
 ---
 
+## Runecrafting — The Meta Joke
+
+> "All rune tokens were just imaginary metadata on Bitcoin Taproot.
+> Ordinals were the real deal. RST is the actual on-chain rune."
+
+In-game, players craft runes. In reality, RST is a real OP20 token on Bitcoin L1.
+The skill mirrors the joke — every rune ever made on Bitcoin was pretend until now.
+
+**Quest chain:**
+1. Explore Lumbridge Castle → talk to Duke Horacio
+2. Complete Rune Mysteries → unlocks Rune Essence mine + Duke's shop
+3. Mine pure essence → craft runes at altars (Air, Fire, Water, Earth, Mind, Body...)
+4. Sell runes to merchant for GP → convert to RST
+5. Each rune type = different GP value (higher altar level = rarer rune = more GP)
+
+**Duke Horacio's shop** (unlocked post-quest):
+- Tiara blanks, talismans, rune pouches
+
+**Economy fit:**
+- Runecrafting = slow, high-skill, high-GP activity
+- High-level runes (Nature, Law, Death) = top-tier GP earners
+- Pairs with Phase 2 (Falador area altars)
+- Phase 3 unlocks best altars (Nature = Karamja, Law = Entrana)
+
+---
+
 ## Near-Term Priority Order
 
 1. ✅ Difficulty index UI (done)
@@ -118,3 +144,5 @@
 8. 🔲 GP claim thresholds (100 → 1,000 → 10,000)
 9. 🔲 Contract v2 redeploy (1% fee, 50/50 burn/treasury)
 10. 🔲 Bank Log NFT system
+11. 🔲 Runecrafting skill (Rune Mysteries quest → essence mine → altars → GP)
+12. 🔲 Duke Horacio shop (post-quest unlock: tiaras, talismans, pouches)
