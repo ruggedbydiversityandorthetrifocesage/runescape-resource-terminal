@@ -30,68 +30,82 @@ if ($bar = null) {
     ~displaymessage(^dm_default);
     return;
 }
-def_struct $struct = oc_param($bar, smelting_struct); 
-// If smithing level isnt high enough, dislpay level fail message
+def_struct $struct = oc_param($bar, smelting_struct);
+// If smithing level isnt high enough, display level fail message
 if (stat(smithing) < struct_param($struct, levelrequired)) {
     ~mesbox(struct_param($struct, levelfailure));
     return;
 }
+def_int $bar_req = struct_param($struct, bar_count);
+def_int $coal_req = struct_param($struct, ingredient_secondary_count);
 def_int $primary_total = inv_total(inv, struct_param($struct, ingredient));
 def_int $secondary_total = inv_total(inv, struct_param($struct, ingredient_secondary));
 // If not enough ores
-if ($primary_total < struct_param($struct, bar_count)) {
+if ($primary_total < $bar_req) {
     ~mesbox(struct_param($struct, processfailure));
     return;
 }
-if ($secondary_total < struct_param($struct, ingredient_secondary_count)) {
+if ($secondary_total < $coal_req) {
     ~mesbox(struct_param($struct, processfailure));
     return;
 }
-// macro event
-if (afk_event = ^true) {
-    ~macro_event_general_spawn(~macro_event_set_random);
-    return;
-}
-anim(human_furnace, 0);
-sound_synth(furnace, 0, 0);
-
-// display process message
-mes(struct_param($struct, processmessage));
-
-p_delay(3);
-
-// delete main ore
-inv_del(inv, struct_param($struct, ingredient), struct_param($struct, bar_count));
-// delete secondary ore
-if (struct_param($struct, ingredient_secondary) ! null) {
-    inv_del(inv, struct_param($struct, ingredient_secondary), struct_param($struct, ingredient_secondary_count));
-}
-
-if ($bar = iron_bar) {
-    // if player is wearing ring of forging
-    if (inv_total(worn, ring_of_forging) > 0 & map_members = ^true) {
-        ~lose_charge_ring_of_forging;
-    } else if (randominc(1) = 1) { // else assume 50% chance of success
-        mes("The ore is too impure and you fail to refine it.");
-        return;
+// Calculate max smelts possible from available ores
+def_int $max_smelt = divide($primary_total, $bar_req);
+if ($coal_req > 0) {
+    def_int $max_from_coal = divide($secondary_total, $coal_req);
+    if ($max_from_coal < $max_smelt) {
+        $max_smelt = $max_from_coal;
     }
 }
-
-// If player is wearing gold smith gauntlets, 2.5x xp. The multiplier was 1.5x in RSC,
-// earliest mention of 2.5x (56.2) xp is in aug 2004: https://web.archive.org/web/20040820223401/http://runevillage.net/ThePub/viewtopic.php?p=1257194&amp
-// No mentioned updates to Family Crest or the gauntlets in that period. 
-// Was likely changed when ported to rs2.
-def_int $xp = struct_param($struct, productexp);
-if ($bar = gold_bar & inv_total(worn, gauntlets_of_goldsmithing) > 0) {
-    $xp = scale(5, 2, $xp); // 2.5x
+// Quantity selection dialog
+mes("How many bars would you like to smelt?");
+def_int $count = ~p_choice3("Make 1", 1, "Make 5", 5, "Make All", $max_smelt);
+if ($count > $max_smelt) {
+    $count = $max_smelt;
 }
-
-stat_advance(smithing, $xp);
-
-// add bar
-inv_add(inv, $bar, 1);
-// display product message
-mes(struct_param($struct, productmessage));
+// Smelting loop
+def_int $smelted = 0;
+def_int $iron_success = 1;
+def_int $xp = 0;
+while ($smelted < $count) {
+    // Re-check ores each iteration
+    if (inv_total(inv, struct_param($struct, ingredient)) < $bar_req) { return; }
+    if ($coal_req > 0 & inv_total(inv, struct_param($struct, ingredient_secondary)) < $coal_req) { return; }
+    // macro event
+    if (afk_event = ^true) {
+        ~macro_event_general_spawn(~macro_event_set_random);
+        return;
+    }
+    anim(human_furnace, 0);
+    sound_synth(furnace, 0, 0);
+    mes(struct_param($struct, processmessage));
+    p_delay(3);
+    // delete ores
+    inv_del(inv, struct_param($struct, ingredient), $bar_req);
+    if (struct_param($struct, ingredient_secondary) ! null) {
+        inv_del(inv, struct_param($struct, ingredient_secondary), $coal_req);
+    }
+    // iron 50% failure rate
+    $iron_success = 1;
+    if ($bar = iron_bar) {
+        if (inv_total(worn, ring_of_forging) > 0 & map_members = ^true) {
+            ~lose_charge_ring_of_forging;
+        } else if (randominc(1) = 1) {
+            mes("The ore is too impure and you fail to refine it.");
+            $iron_success = 0;
+        }
+    }
+    if ($iron_success = 1) {
+        $xp = struct_param($struct, productexp);
+        if ($bar = gold_bar & inv_total(worn, gauntlets_of_goldsmithing) > 0) {
+            $xp = scale(5, 2, $xp); // 2.5x
+        }
+        stat_advance(smithing, $xp);
+        inv_add(inv, $bar, 1);
+        mes(struct_param($struct, productmessage));
+    }
+    $smelted = calc($smelted + 1);
+}
 //----------------------------
 
 //************* WEAKQUEUES DIDNT EXIST UNTIL SEPT 2004 *************

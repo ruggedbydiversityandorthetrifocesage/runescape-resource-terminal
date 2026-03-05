@@ -17,6 +17,8 @@ export function checkPlayerBoundary(player: NetworkPlayer): void {
 
     const { x, z } = player;
 
+    if (z >= 6400) return; // underground — surface zone already enforced at entry
+
     if (tier === 1) {
         const inP2 = x >= P2_ZONE.minX && x <= P2_ZONE.maxX && z >= P2_ZONE.minZ && z <= P2_ZONE.maxZ;
         if (!inP2) {

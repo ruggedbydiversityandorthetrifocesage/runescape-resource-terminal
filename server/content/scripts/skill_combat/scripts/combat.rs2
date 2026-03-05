@@ -67,6 +67,7 @@ if ($weapon = null | (map_members = ^false & oc_members($weapon) = true) | oc_ca
         case 1 : return(human_unarmedkick, unarmed_kick);
         case 2 : return(human_unarmedpunch, unarmed_punch);
     }
+    return(human_unarmedpunch, unarmed_punch);
 }
 // manually handle scythe defensive
 if (oc_category($weapon) = weapon_scythe) {

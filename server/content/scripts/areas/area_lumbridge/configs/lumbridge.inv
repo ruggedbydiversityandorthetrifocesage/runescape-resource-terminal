@@ -6,13 +6,26 @@ size=40
 restock=yes
 stackall=yes
 allstock=no
-stock1=bronze_pickaxe,5,100
-stock2=bronze_axe,10,100
-stock3=iron_axe,5,200
-stock4=steel_axe,3,400
-stock5=iron_battleaxe,5,100
-stock6=steel_battleaxe,2,200
-stock7=mithril_battleaxe,1,3000
+stock1=bronze_axe,10,100
+stock2=iron_axe,5,200
+stock3=steel_axe,3,400
+stock4=black_axe,2,576
+stock5=mithril_axe,2,1300
+stock6=adamant_axe,1,3200
+stock7=rune_axe,1,21000
+stock8=bronze_pickaxe,5,100
+stock9=iron_pickaxe,3,200
+stock10=steel_pickaxe,2,500
+stock11=mithril_pickaxe,1,1300
+stock12=adamant_pickaxe,1,3200
+stock13=rune_pickaxe,1,21000
+stock14=tinderbox,5,1
+stock15=pot_empty,5,1
+stock16=knife,5,1
+stock17=hammer,5,1
+stock18=chisel,5,1
+stock19=cake_tin,5,1
+stock20=jug_empty,5,1
 
 [generalshop1]
 // https://classic.runescape.wiki/w/Lumbridge_General_Store

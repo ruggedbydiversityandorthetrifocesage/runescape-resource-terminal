@@ -513,13 +513,7 @@ button.conn-btn:hover { background: #243300; }
     <!-- How to Play button -->
     <div style="padding: 10px 12px; border-bottom: 1px solid #1e1600;">
       <button class="htp-btn" onclick="document.getElementById('htpModal').classList.add('show')">&#x2753; HOW TO PLAY</button>
-    </div>
-    <!-- Links -->
-    <div class="s-links">
-      <a href="/hiscores">&#x2197; Hiscores</a>
-      <a href="/mapview">&#x2197; Map Viewer</a>
-      <a href="/rst">&#x2197; Wallet Setup</a>
-      <a href="/rst/claim">&#x2197; Claim RST</a>
+      <button class="htp-btn" onclick="document.getElementById('dsModal').classList.add('show')">&#x1F30D; DIFFICULTY SYSTEM</button>
     </div>
   </div>
 </div>
@@ -560,6 +554,55 @@ button.conn-btn:hover { background: #243300; }
       </div>
     </div>
     <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">The more you play, the more you mint. Keep chopping. &#x1F333;&#x26CF;&#xFE0F;</p>
+  </div>
+</div>
+<!-- Difficulty System Modal -->
+<div class="htp-modal-bg" id="dsModal">
+  <div class="htp-box">
+    <button class="htp-close" onclick="document.getElementById('dsModal').classList.remove('show')">&#x2715; CLOSE</button>
+    <h1>&#x1F30D; DIFFICULTY SYSTEM</h1>
+    <div class="htp-sub">Unlock more of the world by earning RST</div>
+    <div class="htp-section">
+      <h3 style="color:#44cc44;">&#x1F7E2; PHASE 1 &mdash; KINGDOM OF MISTHALIN &mdash; 0 RST</h3>
+      <p>Everyone starts here. No RST required.</p>
+      <ul style="margin-top:6px;">
+        <li>Lumbridge</li>
+        <li>Draynor Village &amp; Draynor Manor</li>
+        <li>Varrock &amp; Palace &amp; Lumber Yard</li>
+        <li>Edgeville &amp; Cooks&apos; Guild</li>
+        <li>Barbarian Village</li>
+      </ul>
+    </div>
+    <div class="htp-section">
+      <h3 style="color:#f7931a;">&#x1F7E0; PHASE 2 &mdash; KINGDOM OF ASGARNIA &mdash; 10 RST</h3>
+      <p>Earn 10 RST to unlock the western kingdom.</p>
+      <ul style="margin-top:6px;">
+        <li>Everything in Phase 1</li>
+        <li>Falador &amp; White Knights&apos; Castle</li>
+        <li>Port Sarim &amp; Rimmington</li>
+        <li>Taverly &amp; Burthorpe &amp; Hero&apos;s Guild</li>
+        <li>Ice Mountain &amp; Dwarven Mine &amp; Monastery</li>
+        <li>Goblin Village &amp; Black Knights&apos; Castle</li>
+        <li>Wizards&apos; Tower &amp; Lumbridge Swamp</li>
+        <li>Al Kharid &amp; Duel Arena &amp; Dig Site</li>
+      </ul>
+    </div>
+    <div class="htp-section">
+      <h3 style="color:#ff4444;">&#x1F534; PHASE 3 &mdash; FULL WORLD &mdash; 1,000 RST</h3>
+      <p>The ultimate challenge. Unlock all of Gielinor.</p>
+      <ul style="margin-top:6px;">
+        <li>Everything in Phase 1 &amp; 2</li>
+        <li>Kandarin (Seers&apos; Village, Catherby, Ardougne)</li>
+        <li>Morytania (Canifis, Barrows)</li>
+        <li>Karamja (Brimhaven, TzHaar)</li>
+        <li>Desert &amp; Feldip Hills &amp; Tirannwn, and more</li>
+      </ul>
+    </div>
+    <div class="htp-section" style="border-top:1px solid #2a2000;padding-top:14px;">
+      <h3>HOW TO EARN RST</h3>
+      <p>Chop logs &rarr; sell at General Store &rarr; GP converts to RST automatically. 1,000 GP = 1 RST.</p>
+    </div>
+    <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">The further you go, the harder it gets. Can you unlock the full world? &#x1F30D;</p>
   </div>
 </div>
 <!-- RST Shop Purchase Modal -->
@@ -1557,6 +1600,72 @@ async function fetchLeaderboard() {
 
             const exportCollisionResponse = handleExportCollisionApi(url);
             if (exportCollisionResponse) return exportCollisionResponse;
+
+            // RST Leaderboard — replaces the broken skill-based hiscores
+            if (url.pathname === '/hiscores' || url.pathname === '/hiscores/') {
+                const { totalGPConverted, RST_GP_PER_TOKEN } = await import('../engine/pill/PillMerchant.js');
+                const entries = Array.from(totalGPConverted.entries())
+                    .sort((a, b) => b[1] - a[1]);
+                const rows = entries.map(([username, gp], i) => {
+                    const rst = (gp / RST_GP_PER_TOKEN).toFixed(4);
+                    const gpFmt = gp >= 1_000_000 ? (gp / 1_000_000).toFixed(2) + 'M' : gp >= 1_000 ? (gp / 1_000).toFixed(1) + 'K' : gp.toLocaleString();
+                    const rankColor = i === 0 ? '#f0c030' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : '#888';
+                    return `<tr>
+                        <td style="padding:6px 10px;color:#444;font-size:0.85em;">#\${i + 1}</td>
+                        <td style="padding:6px 10px;color:\${rankColor};">\${username}</td>
+                        <td style="padding:6px 10px;color:#f0c030;text-align:right;">\${gpFmt} GP</td>
+                        <td style="padding:6px 10px;color:#44cc44;text-align:right;">\${rst} RST</td>
+                    </tr>`;
+                }).join('');
+                const noRows = entries.length === 0 ? '<tr><td colspan="4" style="padding:20px;text-align:center;color:#444;">No conversions yet — start playing!</td></tr>' : '';
+                const rstHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>RST Leaderboard — Runescape Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0e0e0e; color:#c0a060; font-family:'Courier New',monospace; min-height:100vh; }
+header { background:#1a1200; border-bottom:2px solid #4a3800; padding:0 20px; height:44px; display:flex; align-items:center; justify-content:space-between; }
+.logo { color:#f0c030; font-size:1em; font-weight:bold; letter-spacing:2px; }
+.back { background:#1a1200; border:1px solid #f0c030; color:#f0c030; padding:5px 14px; font-family:monospace; font-size:0.72em; border-radius:3px; text-decoration:none; }
+.back:hover { background:#2a2000; }
+.wrap { max-width:700px; margin:30px auto; padding:0 16px; }
+h1 { color:#f0c030; font-size:1em; letter-spacing:3px; text-transform:uppercase; margin-bottom:4px; }
+.sub { color:#555; font-size:0.72em; margin-bottom:20px; border-bottom:1px solid #1e1600; padding-bottom:12px; }
+table { width:100%; border-collapse:collapse; }
+th { color:#888; font-size:0.68em; letter-spacing:1px; text-transform:uppercase; padding:6px 10px; border-bottom:2px solid #2a2000; text-align:left; }
+th:last-child, th:nth-child(3) { text-align:right; }
+tr:nth-child(even) { background:#0a0a0a; }
+tr:hover { background:#111; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">&#x26CF; RST LEADERBOARD</span>
+  <a href="/play" class="back">&#x2190; BACK TO GAME</a>
+</header>
+<div class="wrap">
+  <h1>&#x1F3C6; GP Conversion Leaderboard</h1>
+  <p class="sub">All-time GP converted to RST &mdash; updated live &mdash; \${entries.length} players</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Player</th>
+        <th>GP Converted</th>
+        <th>RST Earned</th>
+      </tr>
+    </thead>
+    <tbody>
+      \${rows}\${noRows}
+    </tbody>
+  </table>
+</div>
+</body>
+</html>`;
+                return new Response(rstHtml, { headers: { 'Content-Type': 'text/html' } });
+            }
 
             // Hiscores
             const hiscoresResponse = await handleHiscoresPage(url);
