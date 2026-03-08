@@ -21,6 +21,7 @@ if(%bankinsert = 1) {
 inv_transmit(inv, bank_side:inv);
 inv_transmit(bank, bank_main:inv);
 if_openmain_side(bank_main, bank_side);
+~show_bank_value;
 
 [label,closebank]
 inv_stoptransmit(bank_side:inv);
@@ -125,6 +126,23 @@ switch_obj ($obj) {
     case macro_genilamp : return(true); // cant bank xp lamps
     case default : return(false);
 }
+
+[proc,show_bank_value]
+def_int $total = 0;
+def_int $size = inv_size(bank);
+def_int $slot = 0;
+while ($slot < $size) {
+    def_obj $obj = inv_getobj(bank, $slot);
+    if ($obj ! null) {
+        def_int $cost = oc_cost($obj);
+        if ($cost > 0) {
+            def_int $qty = inv_total(bank, $obj);
+            $total = add($total, calc($cost * $qty));
+        }
+    }
+    $slot = add($slot, 1);
+}
+mes("Bank value: <tostring($total)> GP");
 
 [label,insert_bank](int $start_slot, int $target_slot)
 def_int $src = $start_slot;

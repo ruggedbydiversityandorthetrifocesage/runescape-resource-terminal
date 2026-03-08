@@ -42,7 +42,7 @@ let _provider: JSONRpcProvider | null = null;
 
 function getProvider(): JSONRpcProvider {
     if (!_provider) {
-        _provider = new JSONRpcProvider('https://testnet.opnet.org', networks.opnetTestnet);
+        _provider = new JSONRpcProvider({ url: 'https://testnet.opnet.org', network: networks.opnetTestnet });
     }
     return _provider;
 }
@@ -186,6 +186,95 @@ export async function mintRST(username: string, recipientBech32m: string, gpAmou
 
 export function isMintConfigured(): boolean {
     return !!process.env.RST_MINTER_WIF;
+}
+
+export const SRST_STAKING_CONTRACT = 'opt1sqp0zf6u3j0t4ja894fegmz29g498p0079q0ujwj6';
+
+const SRST_ADD_REWARDS_ABI = [
+    {
+        name: 'increaseAllowance',
+        type: 'function',
+        payable: false,
+        onlyOwner: false,
+        inputs: [
+            { name: 'spender', type: 'ADDRESS' },
+            { name: 'amount', type: 'UINT256' },
+        ],
+        outputs: [],
+    },
+    {
+        name: 'addRewards',
+        type: 'function',
+        payable: false,
+        onlyOwner: false,
+        inputs: [{ name: 'amount', type: 'UINT256' }],
+        outputs: [],
+    },
+];
+
+/**
+ * Deposit RST rewards into the sRST vault. Only callable by the server (BOB address).
+ * Increases vault total without minting new sRST — improves exchange ratio for all stakers.
+ * Step 1: RST.increaseAllowance(stakingContract, amount)
+ * Step 2: sRST.addRewards(amount)
+ */
+export async function addRewardsRST(rstAmount: number): Promise<boolean> {
+    const wif = process.env.RST_MINTER_WIF;
+    if (!wif) {
+        console.log('[RST] RST_MINTER_WIF not set — cannot add rewards');
+        return false;
+    }
+    try {
+        const provider = getProvider();
+        const { wallet } = buildWallet(wif);
+
+        const serverMldsaKey = Buffer.from((wallet.mldsaKeypair as any).publicKey).toString('hex');
+        const callerAddr = Address.fromString('0x' + serverMldsaKey, '0x' + SERVER_TWEAKED_PUBKEY);
+
+        const rstWei = BigInt(Math.floor(rstAmount * 1e18));
+        const rstDisplay = rstAmount.toFixed(4);
+
+        // Step 1: approve staking contract to pull RST
+        const stakingHex = bech32mToHex(SRST_STAKING_CONTRACT);
+        if (!stakingHex) throw new Error('Could not decode staking contract address');
+        const stakingAddr = (Address as any).fromString('0x' + stakingHex);
+
+        const rstContract = getContract(RST_CONTRACT_ADDR, SRST_ADD_REWARDS_ABI as any, provider, networks.opnetTestnet, callerAddr);
+        console.log('[RST] Approving staking contract to pull ' + rstDisplay + ' RST...');
+        const approveSim = await (rstContract as any).increaseAllowance(stakingAddr, rstWei);
+        if ('error' in approveSim) throw new Error('increaseAllowance simulation failed: ' + (approveSim as any).error);
+        const approveReceipt = await approveSim.sendTransaction({
+            signer: wallet.keypair,
+            mldsaSigner: wallet.mldsaKeypair,
+            refundTo: wallet.p2tr,
+            maximumAllowedSatToSpend: 50_000n,
+            network: networks.opnetTestnet,
+            linkMLDSAPublicKeyToAddress: false,
+        });
+        if (!approveReceipt || 'error' in approveReceipt) throw new Error('increaseAllowance rejected: ' + JSON.stringify(approveReceipt));
+        console.log('[RST] Allowance approved. Adding rewards...');
+
+        // Step 2: addRewards on sRST staking contract
+        const stakingContract = getContract(SRST_STAKING_CONTRACT, SRST_ADD_REWARDS_ABI as any, provider, networks.opnetTestnet, callerAddr);
+        const rewardSim = await (stakingContract as any).addRewards(rstWei);
+        if ('error' in rewardSim) throw new Error('addRewards simulation failed: ' + (rewardSim as any).error);
+        const rewardReceipt = await rewardSim.sendTransaction({
+            signer: wallet.keypair,
+            mldsaSigner: wallet.mldsaKeypair,
+            refundTo: wallet.p2tr,
+            maximumAllowedSatToSpend: 50_000n,
+            network: networks.opnetTestnet,
+            linkMLDSAPublicKeyToAddress: false,
+        });
+        if (!rewardReceipt || 'error' in rewardReceipt) throw new Error('addRewards rejected: ' + JSON.stringify(rewardReceipt));
+
+        const txid = (rewardReceipt as any).txid ?? (rewardReceipt as any).hash ?? JSON.stringify(rewardReceipt).slice(0, 80);
+        console.log('[RST] ✅ addRewards ' + rstDisplay + ' RST to vault txid=' + txid);
+        return true;
+    } catch (e: unknown) {
+        console.error('[RST] ❌ addRewards failed:', e instanceof Error ? e.message : String(e));
+        return false;
+    }
 }
 
 const OPNET_RPC = 'https://testnet.opnet.org/api/v1/json-rpc';

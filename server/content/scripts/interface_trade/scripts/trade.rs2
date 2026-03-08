@@ -26,7 +26,12 @@ while ($i < $size) {
 [opplayer4,_]
 if (~in_duel_arena(coord) = true) {
     mes("You can't trade in a duel arena."); // https://youtu.be/nUwvlFkcsqA?t=19
-    return; 
+    return;
+}
+// RST tier check — Extreme Hardcore Ironman mode cannot trade with other players
+if (%rsttier = 0) {
+    mes("Player trading is locked. Earn 10 RST to unlock trading with other players!");
+    return;
 }
 if (.busy = true) {
     mes("<.displayname> is busy at the moment.");
@@ -73,6 +78,15 @@ if (.%tradepartner = uid & %tradestatus = ^tradestatus_received) {
 }
 
 [if_button,trademain:accept]
+// RST tier 1 (Hard Mode) — cap own trade offer at 10,000 GP coins
+if (%rsttier = 1) {
+    def_int $gp = inv_total(tradeoffer, coins);
+    if ($gp > 10000) {
+        if_settext(trademain:status, "Hard Mode: 10,000 GP trade limit. Remove coins to accept.");
+        mes("Hard Mode limit: your offer can't exceed 10,000 GP. Earn 1,000 RST to lift this restriction.");
+        return;
+    }
+}
 %tradestatus = ^tradestatus_pending_accept;
 
 if (.finduid(%tradepartner) = true) {

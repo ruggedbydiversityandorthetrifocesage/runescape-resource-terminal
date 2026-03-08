@@ -1,4 +1,5 @@
 import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
+import VarPlayerType from '#/cache/config/VarPlayerType.js';
 import { getPlayerRSTTier } from '#/engine/pill/PillMerchant.js';
 
 // Phase 1 — Misthalin (0 RST required)
@@ -10,8 +11,23 @@ const P2_ZONE = { minX: 2920, maxX: 3420, minZ: 3080, maxZ: 3904 };
 
 const SPAWN_X = 3097, SPAWN_Z = 3277;
 
+// Called on login and on movement to keep %rsttier in sync for RS2 scripts
+export function syncRSTTierVarp(player: NetworkPlayer): void {
+    const tier = getPlayerRSTTier(player.username);
+    const varpId = VarPlayerType.getId('rsttier');
+    if (varpId !== -1) {
+        player.setVar(varpId, tier);
+    }
+}
+
 export function checkPlayerBoundary(player: NetworkPlayer): void {
     const tier = getPlayerRSTTier(player.username);
+
+    // Keep %rsttier varp in sync for trade.rs2 and other scripts
+    const varpId = VarPlayerType.getId('rsttier');
+    if (varpId !== -1) {
+        player.setVar(varpId, tier);
+    }
 
     if (tier >= 2) return; // full world access
 

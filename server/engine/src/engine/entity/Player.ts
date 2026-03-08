@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { PlayerInfoProt, Visibility } from '@2004scape/rsbuf';
-import { checkPlayerBoundary } from '#/engine/pill/BoundaryCheck.js';
+import { checkPlayerBoundary, syncRSTTierVarp } from '#/engine/pill/BoundaryCheck.js';
 import { CollisionType, CollisionFlag } from '@2004scape/rsmod-pathfinder';
 
 import Component from '#/cache/config/Component.js';
@@ -520,6 +520,9 @@ export default class Player extends PathingEntity {
         this.lastStepX = this.x - 1;
         this.lastStepZ = this.z;
         this.isActive = true;
+
+        // PILL: sync RST tier varp so RS2 scripts can read %rsttier immediately on login
+        syncRSTTierVarp(this);
     }
 
     onReconnect() {

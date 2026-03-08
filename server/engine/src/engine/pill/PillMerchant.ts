@@ -47,6 +47,7 @@ export const mldsaRegistry = new Map<string, string>();     // username -> raw M
 export const pendingGP = new Map<string, number>();         // GP accumulated but not yet granted on-chain
 export const grantedGP = new Map<string, number>();         // GP granted on-chain but not yet claimed by player
 export const totalGPConverted = new Map<string, number>();  // all-time leaderboard score
+export const stakedRegistry = new Map<string, number>();    // username → staked RST amount
 
 // SSE push: engine signals the browser tab when a mint is ready
 export const sseClients = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
@@ -61,6 +62,7 @@ const PENDING_PATH = 'data/rst-pending.json';
 const GRANTED_PATH = 'data/rst-granted.json';
 const WALLETS_PATH = 'data/rst-wallets.json';
 const MLDSA_PATH = 'data/rst-mldsa.json';
+const STAKED_PATH = 'data/rst-staked.json';
 const encoder = new TextEncoder();
 
 function loadLeaderboard(): void {
@@ -90,7 +92,26 @@ function loadLeaderboard(): void {
             for (const [k, v] of Object.entries(data)) grantedGP.set(k, v as number);
             console.log('[RST] Granted GP loaded: ' + grantedGP.size + ' entries');
         }
+        if (fs.existsSync(STAKED_PATH)) {
+            const data = JSON.parse(fs.readFileSync(STAKED_PATH, 'utf-8'));
+            for (const [k, v] of Object.entries(data)) stakedRegistry.set(k, v as number);
+            console.log('[RST] Staked registry loaded: ' + stakedRegistry.size + ' entries');
+        }
     } catch {}
+}
+
+export function saveStaked(): void {
+    try {
+        fs.mkdirSync(path.dirname(STAKED_PATH), { recursive: true });
+        fs.writeFileSync(STAKED_PATH, JSON.stringify(Object.fromEntries(stakedRegistry)));
+    } catch {}
+}
+
+export function stakePlayer(username: string, amount: number): void {
+    const prev = stakedRegistry.get(username) ?? 0;
+    stakedRegistry.set(username, prev + amount);
+    saveStaked();
+    console.log('[RST] Staked: ' + username + ' +' + amount + ' RST (total: ' + (prev + amount) + ')');
 }
 
 function saveLeaderboard(): void {
@@ -148,9 +169,10 @@ loadLeaderboard();
 export const rstBalanceCache = new Map<string, number>(); // username → RST balance
 
 export function getPlayerRSTTier(username: string): 0 | 1 | 2 {
+    const staked = stakedRegistry.get(username) ?? 0;
     const bal = rstBalanceCache.get(username) ?? 0;
-    if (bal >= 1000) return 2;
-    if (bal >= 10) return 1;
+    if (staked >= 10 || bal >= 1000) return 2; // staked 10+ OR 1000+ RST → full world
+    if (bal >= 10 || staked > 0) return 1;      // 10+ RST OR any sRST → hard mode
     return 0;
 }
 
