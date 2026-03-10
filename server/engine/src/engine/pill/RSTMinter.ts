@@ -35,7 +35,27 @@ const RST_MINT_ABI = [
     },
 ];
 
-// Prevent concurrent mints for the same player
+// Serial wallet queue — ALL server wallet TXs go through here.
+// The server wallet has one UTXO at a time; concurrent TXs cause double-spend contention
+// (only 1 TX wins, rest dropped). This queue guarantees each TX is fully broadcast
+// before the next one starts — covering grantClaim, addRewards, and any future calls.
+type WalletJob = { label: string; run: () => Promise<boolean>; resolve: (v: boolean) => void };
+const walletQueue: WalletJob[] = [];
+let walletQueueRunning = false;
+
+async function runWalletQueue(): Promise<void> {
+    if (walletQueueRunning) return;
+    walletQueueRunning = true;
+    while (walletQueue.length > 0) {
+        const job = walletQueue.shift()!;
+        console.log('[RST] Queue: starting ' + job.label + ' (remaining: ' + walletQueue.length + ')');
+        const result = await job.run();
+        job.resolve(result);
+    }
+    walletQueueRunning = false;
+}
+
+// Prevent duplicate queued grants for the same player
 const mintingInProgress = new Set<string>();
 
 let _provider: JSONRpcProvider | null = null;
@@ -105,22 +125,14 @@ function bech32mToHex(addr: string): string | null {
 }
 
 /**
- * Mint RST tokens to a player's wallet from the server.
- * Requires RST_MINTER_WIF environment variable set to the contract deployer's WIF key.
- * Returns true if mint was dispatched, false if skipped/failed.
+ * Internal implementation — called only by the serial queue runner.
  */
-export async function mintRST(username: string, recipientBech32m: string, gpAmount: number, mldsaPublicKey?: string): Promise<boolean> {
+async function _mintRST(username: string, recipientBech32m: string, gpAmount: number, mldsaPublicKey?: string): Promise<boolean> {
     const wif = process.env.RST_MINTER_WIF;
     if (!wif) {
         console.log('[RST] RST_MINTER_WIF not set — cannot auto-mint for ' + username);
         return false;
     }
-
-    if (mintingInProgress.has(username)) {
-        console.log('[RST] Mint already in progress for ' + username + ', skipping duplicate');
-        return false;
-    }
-
     mintingInProgress.add(username);
     try {
         const provider = getProvider();
@@ -184,24 +196,66 @@ export async function mintRST(username: string, recipientBech32m: string, gpAmou
     }
 }
 
+/**
+ * Public entry point — enqueues a grantClaim job and returns when it completes.
+ * Guarantees serial execution (via walletQueue) so each TX is broadcast before the next starts.
+ */
+export function mintRST(username: string, recipientBech32m: string, gpAmount: number, mldsaPublicKey?: string): Promise<boolean> {
+    if (mintingInProgress.has(username)) {
+        console.log('[RST] Mint already queued for ' + username + ', skipping duplicate');
+        return Promise.resolve(false);
+    }
+    return new Promise<boolean>(resolve => {
+        walletQueue.push({
+            label: 'grantClaim:' + username,
+            run: () => _mintRST(username, recipientBech32m, gpAmount, mldsaPublicKey),
+            resolve,
+        });
+        console.log('[RST] Queued grantClaim for ' + username + ' (queue depth: ' + walletQueue.length + ')');
+        runWalletQueue();
+    });
+}
+
+/**
+ * Enqueue an addRewards flush through the shared wallet queue.
+ * This prevents UTXO contention with concurrent grantClaim TXs.
+ */
+export function queueAddRewards(rstAmount: number): Promise<boolean> {
+    return new Promise<boolean>(resolve => {
+        walletQueue.push({
+            label: 'addRewards:' + rstAmount.toFixed(4) + 'RST',
+            run: () => addRewardsRST(rstAmount),
+            resolve,
+        });
+        console.log('[RST] Queued addRewards ' + rstAmount.toFixed(4) + ' RST (queue depth: ' + walletQueue.length + ')');
+        runWalletQueue();
+    });
+}
+
 export function isMintConfigured(): boolean {
     return !!process.env.RST_MINTER_WIF;
 }
 
-export const SRST_STAKING_CONTRACT = 'opt1sqp0zf6u3j0t4ja894fegmz29g498p0079q0ujwj6';
+// RSTStaking V2 — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender identity)
+export const SRST_STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
+// 32-byte tweaked pubkey of sRST staking contract — used as `to` in RST.transfer()
+const SRST_STAKING_PUBKEY = '8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
 
-const SRST_ADD_REWARDS_ABI = [
+const RST_TRANSFER_ABI = [
     {
-        name: 'increaseAllowance',
+        name: 'transfer',
         type: 'function',
         payable: false,
         onlyOwner: false,
         inputs: [
-            { name: 'spender', type: 'ADDRESS' },
+            { name: 'to', type: 'ADDRESS' },
             { name: 'amount', type: 'UINT256' },
         ],
         outputs: [],
     },
+];
+
+const SRST_ADD_REWARDS_ABI = [
     {
         name: 'addRewards',
         type: 'function',
@@ -213,10 +267,14 @@ const SRST_ADD_REWARDS_ABI = [
 ];
 
 /**
- * Deposit RST rewards into the sRST vault. Only callable by the server (BOB address).
- * Increases vault total without minting new sRST — improves exchange ratio for all stakers.
- * Step 1: RST.increaseAllowance(stakingContract, amount)
- * Step 2: sRST.addRewards(amount)
+ * Deposit RST rewards into the sRST staking vault.
+ *
+ * Two-TX flush:
+ *   1. RST.transfer(STAKING, feeAmount)  — moves real RST from BOB into the staking contract
+ *   2. sRST.addRewards(feeAmount)        — updates MasterChef rewardPerShare accounting
+ *
+ * BOB's wallet must hold RST (funded once by deployer via FUND BOB in admin panel).
+ * TX2 is pure accounting so even if it fails due to UTXO contention it retries next flush.
  */
 export async function addRewardsRST(rstAmount: number): Promise<boolean> {
     const wif = process.env.RST_MINTER_WIF;
@@ -226,38 +284,27 @@ export async function addRewardsRST(rstAmount: number): Promise<boolean> {
     }
     try {
         const provider = getProvider();
-        const { wallet } = buildWallet(wif);
-
-        const serverMldsaKey = Buffer.from((wallet.mldsaKeypair as any).publicKey).toString('hex');
-        const callerAddr = Address.fromString('0x' + serverMldsaKey, '0x' + SERVER_TWEAKED_PUBKEY);
-
         const rstWei = BigInt(Math.floor(rstAmount * 1e18));
         const rstDisplay = rstAmount.toFixed(4);
 
-        // Step 1: approve staking contract to pull RST
-        const stakingHex = bech32mToHex(SRST_STAKING_CONTRACT);
-        if (!stakingHex) throw new Error('Could not decode staking contract address');
-        const stakingAddr = (Address as any).fromString('0x' + stakingHex);
+        const { wallet } = buildWallet(wif);
+        // OPNet resolves Blockchain.tx.sender as the REGISTERED MLDSA identity for this BTC address.
+        // The server locally computes sha256(mldsaKey)=aa8308a6... but OPNet uses ad5bad18...
+        // Pass hash directly (32 bytes = used as-is, no SHA256) + tweaked pubkey so sendTransaction
+        // can derive the legacy key. Without tweaked pubkey, sendTransaction throws "Legacy public key not set".
+        const callerAddr = (Address as any).fromString(
+            '0x' + 'ad5bad18085ad4cf4f75b71d672bee0b19df826d622279b0020cc29120efce33',
+            '0x' + SERVER_TWEAKED_PUBKEY,
+        );
 
-        const rstContract = getContract(RST_CONTRACT_ADDR, SRST_ADD_REWARDS_ABI as any, provider, networks.opnetTestnet, callerAddr);
-        console.log('[RST] Approving staking contract to pull ' + rstDisplay + ' RST...');
-        const approveSim = await (rstContract as any).increaseAllowance(stakingAddr, rstWei);
-        if ('error' in approveSim) throw new Error('increaseAllowance simulation failed: ' + (approveSim as any).error);
-        const approveReceipt = await approveSim.sendTransaction({
-            signer: wallet.keypair,
-            mldsaSigner: wallet.mldsaKeypair,
-            refundTo: wallet.p2tr,
-            maximumAllowedSatToSpend: 50_000n,
-            network: networks.opnetTestnet,
-            linkMLDSAPublicKeyToAddress: false,
-        });
-        if (!approveReceipt || 'error' in approveReceipt) throw new Error('increaseAllowance rejected: ' + JSON.stringify(approveReceipt));
-        console.log('[RST] Allowance approved. Adding rewards...');
-
-        // Step 2: addRewards on sRST staking contract
+        // Pure accounting update — no token movement from BOB.
+        // RST must be pre-funded in the staking contract via FUND POOL (deployer sends RST.transfer to staking).
         const stakingContract = getContract(SRST_STAKING_CONTRACT, SRST_ADD_REWARDS_ABI as any, provider, networks.opnetTestnet, callerAddr);
+        console.log('[RST] addRewards(' + rstDisplay + ' RST) → staking vault accounting...');
         const rewardSim = await (stakingContract as any).addRewards(rstWei);
-        if ('error' in rewardSim) throw new Error('addRewards simulation failed: ' + (rewardSim as any).error);
+        if ('error' in rewardSim) {
+            throw new Error('addRewards simulation failed: ' + String((rewardSim as any).error ?? ''));
+        }
         const rewardReceipt = await rewardSim.sendTransaction({
             signer: wallet.keypair,
             mldsaSigner: wallet.mldsaKeypair,
@@ -266,13 +313,14 @@ export async function addRewardsRST(rstAmount: number): Promise<boolean> {
             network: networks.opnetTestnet,
             linkMLDSAPublicKeyToAddress: false,
         });
-        if (!rewardReceipt || 'error' in rewardReceipt) throw new Error('addRewards rejected: ' + JSON.stringify(rewardReceipt));
-
-        const txid = (rewardReceipt as any).txid ?? (rewardReceipt as any).hash ?? JSON.stringify(rewardReceipt).slice(0, 80);
-        console.log('[RST] ✅ addRewards ' + rstDisplay + ' RST to vault txid=' + txid);
+        if (!rewardReceipt || 'error' in rewardReceipt) {
+            throw new Error('addRewards rejected: ' + JSON.stringify(rewardReceipt));
+        }
+        const txid = (rewardReceipt as any).txid ?? (rewardReceipt as any).hash ?? (rewardReceipt as any).id ?? JSON.stringify(rewardReceipt).slice(0, 80);
+        console.log('[RST] ✅ addRewards ' + rstDisplay + ' RST → staking vault txid=' + txid);
         return true;
     } catch (e: unknown) {
-        console.error('[RST] ❌ addRewards failed:', e instanceof Error ? e.message : String(e));
+        console.error('[RST] ❌ addRewardsRST failed:', e instanceof Error ? e.message : String(e));
         return false;
     }
 }

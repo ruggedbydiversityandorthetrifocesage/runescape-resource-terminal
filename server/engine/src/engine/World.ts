@@ -60,7 +60,7 @@ import ScriptRunner from '#/engine/script/ScriptRunner.js';
 import ScriptState from '#/engine/script/ScriptState.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import { WorldStat } from '#/engine/WorldStat.js';
-import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, tutorialRemindTick, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from '#/engine/pill/TutorialTracker.js';
+import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, tutorialRemindTick, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, TUTORIAL_BANK_X, TUTORIAL_BANK_Z } from '#/engine/pill/TutorialTracker.js';
 import { awardCowKillGP, COW_NPC_IDS } from '#/engine/pill/PillMerchant.js';
 import { broadcastRSTShop, setRSTBrokerNpc } from '#/engine/pill/RSTShop.js';
 import Zone from '#/engine/zone/Zone.js';
@@ -341,6 +341,29 @@ class World {
                     printInfo('[RST] Broker NPC spawned at (3209, 3217)');
                 } catch (err) {
                     printError('[RST] Failed to spawn broker NPC: ' + err);
+                }
+
+                // Spawn Satoshi the Banker inside Lumbridge Castle ground floor
+                try {
+                    const satoshiNpcType = NpcType.get(494);
+                    satoshiNpcType.name = 'Satoshi';
+                    const satoshiNpc = new Npc(0, TUTORIAL_BANK_X, TUTORIAL_BANK_Z, satoshiNpcType.size, satoshiNpcType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), 494, MoveRestrict.NOMOVE, satoshiNpcType.blockwalk);
+                    satoshiNpc.targetOp = NpcMode.NONE;
+                    this.addNpc(satoshiNpc, -1);
+                    printInfo('[RST] Satoshi the Banker spawned at (' + TUTORIAL_BANK_X + ', ' + TUTORIAL_BANK_Z + ')');
+                } catch (err) {
+                    printError('[RST] Failed to spawn Satoshi banker: ' + err);
+                }
+
+                // Spawn bank booth Loc — gives the coin-stack minimap icon + bank interface
+                // ID 2213 = bankbooth, shape 0 = wall_straight, angle 2 = east-facing wall
+                try {
+                    const boothType = LocType.get(2213);
+                    const bankBooth = new Loc(0, TUTORIAL_BANK_X, TUTORIAL_BANK_Z, boothType.width, boothType.length, EntityLifeCycle.DESPAWN, 2213, 0, 2);
+                    this.addLoc(bankBooth, -1);
+                    printInfo('[RST] Bank booth spawned at (' + TUTORIAL_BANK_X + ', ' + TUTORIAL_BANK_Z + ')');
+                } catch (err) {
+                    printError('[RST] Failed to spawn bank booth: ' + err);
                 }
             }
         }
@@ -814,6 +837,17 @@ class World {
                         player.messageGame('Sell your logs at the Lumbridge General Store just north of you!');
                     }
                 }
+
+                // Tutorial step 2 → 3: detect proximity to Satoshi the Banker
+                if (getTutorialStep(player.username) === 2 && player.level === 0) {
+                    const dx = Math.abs(player.x - TUTORIAL_BANK_X);
+                    const dz = Math.abs(player.z - TUTORIAL_BANK_Z);
+                    if (dx <= 3 && dz <= 3) {
+                        setTutorialStep(player.username, 3);
+                        player.stopHint();
+                        player.messageGame('Tutorial complete! Good luck on your adventure!');
+                    }
+                }
             } catch (err) {
                 console.error(err);
                 console.warn(`[LOGOUT DEBUG] Server exception during player tick for ${player.username} - forcing logout`);
@@ -1059,6 +1093,14 @@ class World {
                 }
             }
 
+            // Auto-complete Rune Mysteries quest for all players
+            {
+                const runeMystVarp = VarPlayerType.getByName('runemysteries');
+                if (runeMystVarp && player.vars[runeMystVarp.id] < 4) {
+                    player.setVar(runeMystVarp.id, 4);
+                }
+            }
+
             // Tutorial hint arrows for new players
             // tutorialNew is set on the player object in the login worker thread,
             // so we read it here in the main thread and register in our Map
@@ -1072,6 +1114,9 @@ class World {
                 player.messageGame('Welcome to Lumbridge! Follow the arrow to chop some logs!');
             } else if (tStep === 1) {
                 player.hintTile(2, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, 0);
+            } else if (tStep === 2) {
+                player.hintTile(2, TUTORIAL_BANK_X, TUTORIAL_BANK_Z, 0);
+                player.messageGame('Great work! Now visit Satoshi the Banker to store your items.');
             }
 
             if (this.shutdownTick != -1) {

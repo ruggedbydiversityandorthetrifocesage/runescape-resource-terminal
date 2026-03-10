@@ -67,6 +67,12 @@
 **3-min cooldown (in progress):**
 - Block selling if player has unclaimed RST (merchant rejects, shows reminder)
 
+**RST Shop purchase fees → staking pool (planned):**
+- When a player spends RST at the RST Broker shop, instead of burning the RST, route it to the sRST staking rewards pool via `addRewards()`
+- Currently: RST is burned on purchase
+- Goal: make shop activity directly benefit stakers (buy pressure + yield generation)
+- Implementation: in `RSTShop.ts`, after deducting the RST cost, call `addRewards(amount)` on the staking contract instead of discarding
+
 ---
 
 ## Contract v2 / LP (Planned)
@@ -132,17 +138,46 @@ The skill mirrors the joke — every rune ever made on Bitcoin was pretend until
 
 ---
 
+## GP Reward Tiers (Planned)
+
+**Tier 1 — Raw gathering (base rate):**
+- Woodcutting, Mining, Fishing
+
+**Tier 2 — Processed goods (2-3x multiplier, requires multiple resources/steps):**
+- Smelting: 3x (ore + coal → bar)
+- Cooking/Cooked Goods: 3x (raw food + fire/range → cooked)
+- Runecrafting: 2x (essence + altar run)
+
+**V3 — Complex crafting (TBD, implement last):**
+- Herblore, Crafting, Farming
+
+---
+
+## Satoshi the Banker (Planned)
+
+- Add Banker NPC named "Satoshi" in Lumbridge spawn area
+- Phase 1: standard bank functionality (open bank interface like any banker)
+- Phase 2 (later): AI-powered — Satoshi can answer questions, give hints, interact with player
+- "Your bank is on the blockchain. Satoshi holds the keys." vibe
+
+---
+
 ## Near-Term Priority Order
 
 1. ✅ Difficulty index UI (done)
 2. ✅ World boundary gating by RST balance (done)
-3. 🔲 Confirm Phase 2 boundary coordinates match red-outline map
-4. 🔲 Add fishing skill + resources (Phase 2 content)
-5. 🔲 Add smelting/smithing skill + resources (Phase 2 content)
-6. 🔲 Block selling during 3-min cooldown (merchant rejects)
-7. 🔲 Boat mechanic (Port Sarim → Karamja)
-8. 🔲 GP claim thresholds (100 → 1,000 → 10,000)
-9. 🔲 Contract v2 redeploy (1% fee, 50/50 burn/treasury)
-10. 🔲 Bank Log NFT system
-11. 🔲 Runecrafting skill (Rune Mysteries quest → essence mine → altars → GP)
-12. 🔲 Duke Horacio shop (post-quest unlock: tiaras, talismans, pouches)
+3. 🔲 New characters spawn with Iron Axe instead of Bronze Axe
+4. 🔲 Auto-complete Rune Mysteries Quest for all players on login
+4. 🔲 Confirm Phase 2 boundary coordinates match red-outline map
+5. 🔲 Add fishing skill + resources (Phase 2 content)
+6. 🔲 Add smelting/smithing skill + resources (Phase 2 content)
+7. 🔲 Apply Tier 2 GP multipliers (smelting 3x, cooking 3x, runecrafting 2x)
+8. 🔲 Block selling during 3-min cooldown (merchant rejects)
+9. 🔲 Boat mechanic (Port Sarim → Karamja)
+10. 🔲 GP claim thresholds (100 → 1,000 → 10,000)
+11. 🔲 Contract v2 redeploy (1% fee, 50/50 burn/treasury)
+12. 🔲 Bank Log NFT system
+13. 🔲 Runecrafting skill (Rune Mysteries auto-completed → essence mine → altars → GP)
+14. 🔲 Duke Horacio shop (post-quest unlock: tiaras, talismans, pouches)
+15. 🔲 Wallet TX history panel (localStorage — stake, unstake, claim events)
+16. 🔲 V3 crafting skills (Herblore, Crafting, Farming)

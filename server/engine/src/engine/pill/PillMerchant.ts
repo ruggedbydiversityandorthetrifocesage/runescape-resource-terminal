@@ -3,7 +3,7 @@ import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import Npc from '#/engine/entity/Npc.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { mintRST, isMintConfigured, fetchRSTBalance } from './RSTMinter.js';
+import { mintRST, isMintConfigured, fetchRSTBalance, queueAddRewards } from './RSTMinter.js';
 import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from './TutorialTracker.js';
 
 // ============================================================
@@ -56,6 +56,31 @@ export const sseClients = new Map<string, ReadableStreamDefaultController<Uint8A
 // Only one grantClaim per player per 3 minutes; GP accumulates in between
 const GRANT_COOLDOWN_MS = 3 * 60 * 1000;
 const lastGrantTime = new Map<string, number>();
+
+// 1% conversion fee — accumulates in pendingRewardGP, flushed on a fixed 30-min interval.
+// queueAddRewards() routes through the shared wallet queue, so it never runs concurrently
+// with grantClaim TXs (which would cause UTXO double-spend contention).
+const REWARD_FEE_PCT = 0.01;
+const REWARD_FLUSH_INTERVAL_MS = 10 * 60 * 1000; // flush every 10 min (1 BTC block — slowfi style)
+const REWARD_FLUSH_MIN_RST = 0.01;               // don't flush dust (< 0.01 RST)
+let pendingRewardGP = 0;
+
+// Start the reward flush interval once on module load
+setInterval(() => {
+    if (pendingRewardGP <= 0) return;
+    const flushRST = pendingRewardGP / RST_GP_PER_TOKEN;
+    if (flushRST < REWARD_FLUSH_MIN_RST) return;
+    pendingRewardGP = 0;
+    // Route through walletQueue — waits behind any in-progress grantClaim TXs
+    queueAddRewards(flushRST).then(ok => {
+        if (ok) {
+            console.log('[RST] ⏰ Reward flush: +' + flushRST.toFixed(4) + ' RST distributed to stakers');
+        } else {
+            pendingRewardGP += flushRST * RST_GP_PER_TOKEN; // return to buffer on failure
+            console.log('[RST] ⏰ Reward flush failed — GP returned to buffer');
+        }
+    });
+}, REWARD_FLUSH_INTERVAL_MS);
 
 const LEADERBOARD_PATH = 'data/rst-leaderboard.json';
 const PENDING_PATH = 'data/rst-pending.json';
@@ -191,6 +216,7 @@ setTimeout(() => {
     setInterval(() => { void refreshRSTBalances(); }, 60_000);
 }, 5_000);
 
+
 export function getLeaderboard(): Array<{ username: string; gp: number; rst: number }> {
     return Array.from(totalGPConverted.entries())
         .sort((a, b) => b[1] - a[1])
@@ -263,10 +289,10 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     // Tutorial progression
     const tStep = getTutorialStep(player.username);
     if (tStep === 1) {
-        // First sale — tutorial complete, clear hint
+        // First sale — advance to bank step, point to Satoshi
         setTutorialStep(player.username, 2);
-        player.stopHint();
-        player.messageGame('You sold your resources! Visit /play in your browser to claim your RST tokens!');
+        player.hintTile(2, 3207, 3220, 0);
+        player.messageGame('Nice work! Now visit Satoshi the Banker to store your items safely.');
     }
 
     if (newPending < 10) {
@@ -293,11 +319,15 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
         }
         lastGrantTime.set(player.username, now);
         // Server calls grantClaim(playerMldsaHash, rstWei) on the v2 contract.
-        // Player then claims from browser via claim(amount).
-        player.messageGame('Granting ' + rstValue + ' RST — sign at /play to claim!');
+        // Player receives 99% of earned RST; 1% fee accumulates in pendingRewardGP.
+        // When pendingRewardGP >= 1 RST, server flushes it to the sRST staking reward pool.
         const gpSnapshot = newPending;
+        const feeGP = Math.floor(gpSnapshot * REWARD_FEE_PCT);
+        const playerGP = gpSnapshot - feeGP;
+        const playerRSTDisplay = (playerGP / RST_GP_PER_TOKEN).toFixed(4);
+        player.messageGame('Granting ' + playerRSTDisplay + ' RST — sign at /play to claim!');
         const mldsaKey = mldsaRegistry.get(player.username);
-        const rstWei = (BigInt(Math.floor(gpSnapshot)) * (10n ** 18n) / BigInt(RST_GP_PER_TOKEN)).toString();
+        const rstWei = (BigInt(Math.floor(playerGP)) * (10n ** 18n) / BigInt(RST_GP_PER_TOKEN)).toString();
         // Push minting_started IMMEDIATELY so browser locks button before TX is in flight
         const ctrlEarly = sseClients.get(player.username);
         if (ctrlEarly) {
@@ -305,20 +335,23 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                 ctrlEarly.enqueue(encoder.encode('data: ' + JSON.stringify({
                     type: 'minting_started',
                     username: player.username,
-                    gpAmount: gpSnapshot,
-                    rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
+                    gpAmount: playerGP,
+                    rstAmount: playerGP / RST_GP_PER_TOKEN,
                     rstWei,
                 }) + '\n\n'));
             } catch { sseClients.delete(player.username); }
         }
-        mintRST(player.username, wallet, gpSnapshot, mldsaKey).then(success => {
+        mintRST(player.username, wallet, playerGP, mldsaKey).then(success => {
             const ctrl = sseClients.get(player.username);
             if (success) {
                 const prevGranted = grantedGP.get(player.username) ?? 0;
-                grantedGP.set(player.username, prevGranted + gpSnapshot);
+                grantedGP.set(player.username, prevGranted + playerGP);
                 saveGranted();
                 pendingGP.delete(player.username);
                 savePending();
+
+                // Accumulate 1% fee — flushed by 30-min interval, not here
+                pendingRewardGP += feeGP;
             }
             // Whether grant succeeded or failed, push mint_ready so the player can claim from browser
             if (ctrl) {
@@ -327,8 +360,8 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                         type: 'mint_ready',
                         username: player.username,
                         wallet,
-                        gpAmount: gpSnapshot,
-                        rstAmount: gpSnapshot / RST_GP_PER_TOKEN,
+                        gpAmount: playerGP,
+                        rstAmount: playerGP / RST_GP_PER_TOKEN,
                         rstWei,
                     }) + '\n\n'));
                 } catch { sseClients.delete(player.username); }

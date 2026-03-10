@@ -50,12 +50,12 @@ export class PlayerLoading {
             player.baseLevels[PlayerStat.HITPOINTS] = 10;
             player.levels[PlayerStat.HITPOINTS] = 10;
 
-            // RST: spawn in Lumbridge with bronze axe
+            // RST: spawn in Lumbridge with iron axe
             player.x = 3222;
             player.z = 3219;
             player.level = 0;
             const startInv = player.getInventory(93);
-            if (startInv) { startInv.set(0, { id: 1351, count: 1 }); }
+            if (startInv) { startInv.set(0, { id: 1349, count: 1 }); }
 
             // Flag so the main World thread sets up tutorial on first login
             player.tutorialNew = true;

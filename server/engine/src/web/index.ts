@@ -8,6 +8,7 @@ import { handleScreenshotsListPage, handleScreenshotFilePage } from './pages/scr
 import { handleScreenshotUpload, handleExportCollisionApi } from './pages/api.js';
 import { handleDisclaimerPage, handleMapviewPage, handlePublicFiles } from './pages/static.js';
 import { WebSocketData, handleWebSocketUpgrade, handleGatewayEndpointGet, websocketHandlers } from './websocket.js';
+import { db } from '#/db/query.js';
 
 export type { WebSocketData };
 
@@ -80,9 +81,9 @@ button:disabled { background: #333; color: #666; cursor: not-allowed; }
 <script>
 const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
 const RST_CONTRACT_PUBKEY = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
-// RSTStaking V2 MasterChef — deployed 2026-03-07
-const STAKING_CONTRACT = 'opt1sqpnwrzsteu0q9nllckgj0kwdw33xhlj7lvf3eyq4';
-const STAKING_CONTRACT_PUBKEY = '0x870445dc98bb046bb6dd1f6984174b5b2bac9c70a1259ce3f4801a992bf4fa1c';
+// RSTStaking V2 MasterChef — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender)
+const STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
+const STAKING_CONTRACT_PUBKEY = '0x8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
 let connectedWallet = null;
 
 function bech32mAddrToHex(addr) {
@@ -297,6 +298,17 @@ function showStatus(msg, type) {
                 });
             }
 
+            // Admin: World broadcast — send a game chat message to all connected players
+            if (url.pathname === '/admin/broadcast' && req.method === 'POST') {
+                const body = await req.json() as any;
+                const message = String(body?.message ?? '').trim().slice(0, 200);
+                if (!message) return new Response(JSON.stringify({ error: 'Empty message' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+                World.broadcastMes('[Bob] ' + message);
+                const players = Array.from(World.players).length;
+                console.log('[BROADCAST] "' + message + '" → ' + players + ' player(s)');
+                return new Response(JSON.stringify({ ok: true, players }), { headers: { 'Content-Type': 'application/json' } });
+            }
+
             // RST: Confirm claim — clear pending GP after successful mint
             // RST: Stake — player must be currently logged in to stake
             if (url.pathname === '/rst/stake' && req.method === 'POST') {
@@ -407,6 +419,7 @@ function showStatus(msg, type) {
                         console.log('[RST] Wallet registered: ' + username + ' -> ' + wallet + (pending > 0 ? ' (' + pending + ' GP pending)' : ''));
                         return new Response(JSON.stringify({ success: true, username, wallet, pendingGP: pending, hasMldsa: !!mldsaKey }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
                     } catch (e: any) {
+                        console.error('[RST] register-wallet error:', e.message);
                         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
                     }
                 }
@@ -572,18 +585,17 @@ button.conn-btn:hover { background: #243300; }
     <div class="s-section">
       <h3>Most GP Converted</h3>
       <div id="leaderboard"><div style="color:#333;font-size:0.72em;text-align:center;padding:8px;">Loading...</div></div>
+      <a href="/hiscores" target="_blank" rel="noopener" style="display:block;margin-top:6px;color:#444;font-size:0.65em;text-align:center;text-decoration:none;">&#x1F4CA; Full Hiscores &#x2197;</a>
     </div>
     <!-- Online Players -->
     <div class="s-section">
       <h3>Online Now <span id="onlineCount" style="color:#44cc44;font-weight:normal;font-size:0.9em;"></span></h3>
       <div id="onlineList"><div style="color:#333;font-size:0.72em;text-align:center;padding:4px;">-</div></div>
     </div>
-    <!-- How to Play button -->
+    <!-- Bottom sidebar buttons -->
     <div style="padding: 10px 12px; border-bottom: 1px solid #1e1600;">
-      <button class="htp-btn" onclick="document.getElementById('htpModal').classList.add('show')">&#x2753; HOW TO PLAY</button>
-      <button class="htp-btn" onclick="document.getElementById('dsModal').classList.add('show')">&#x1F30D; DIFFICULTY SYSTEM</button>
-      <button class="htp-btn" onclick="document.getElementById('tokenomicsModal').classList.add('show')">&#x20BF; TOKENOMICS</button>
-      <button class="htp-btn" onclick="document.getElementById('roadmapModal').classList.add('show')">&#x1F5FA; ROADMAP</button>
+      <button class="htp-btn" onclick="openTxHistoryModal()" style="background:#0a0a1a;border-color:#4444aa;color:#8888ff;margin-bottom:4px;">&#x1F4CB; TX HISTORY</button>
+      <button class="htp-btn" onclick="document.getElementById('changelogModal').classList.add('show')">&#x1F4DC; CHANGE LOG</button>
     </div>
   </div>
 </div>
@@ -764,6 +776,50 @@ button.conn-btn:hover { background: #243300; }
     <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">Runescape Resource Terminal &mdash; BTC L1 F2P P2E &#x26CF;</p>
   </div>
 </div>
+<!-- Changelog Modal -->
+<div class="htp-modal-bg" id="changelogModal">
+  <div class="htp-box">
+    <button class="htp-close" onclick="document.getElementById('changelogModal').classList.remove('show')">&#x2715; CLOSE</button>
+    <h1>&#x1F4DC; CHANGE LOG</h1>
+    <div class="htp-sub">Server updates &mdash; most recent first</div>
+
+    <div class="htp-section">
+      <h3 style="color:#44cc44;">&#x1F7E2; 2026-03-09 &mdash; V2 STAKING LIVE (Testnet)</h3>
+      <ul style="margin-top:6px;">
+        <li>&#x26A1; sRST staking contract deployed &mdash; stake RST to earn rewards</li>
+        <li>&#x1F3AF; 4 lock tiers: Flexible (1x), 30-day (5x), 90-day (4x), 180-day (2.5x)</li>
+        <li>&#x1F4B0; 1% of every GP sale now flows to sRST stakers as rewards</li>
+        <li>&#x1F30D; World gating updated: stake 10+ RST to instantly unlock Hard Mode</li>
+        <li>&#x1F3C6; Hiscores page now shows full skill levels, time played, and bank value</li>
+        <li>&#x2694; Admin broadcast system added &mdash; server-wide announcements via Bob</li>
+      </ul>
+    </div>
+
+    <div class="htp-section">
+      <h3 style="color:#f7931a;">&#x1F7E1; 2026-03-03 &mdash; V1 LAUNCH (Testnet)</h3>
+      <ul style="margin-top:6px;">
+        <li>&#x2705; RST OP20 contract deployed on Bitcoin L1 (Testnet)</li>
+        <li>&#x1FA93; Earn RST by chopping trees, mining, fishing &amp; selling to the general store</li>
+        <li>&#x1F4E4; Claim RST directly to your OP_WALLET</li>
+        <li>&#x1F30D; Difficulty system: RST balance unlocks new areas of the world</li>
+        <li>&#x1F4C8; LP pool live on MotoSwap &mdash; RST tradeable</li>
+        <li>&#x1F3C5; OG Rank tracking begins &mdash; early LP traders recorded</li>
+      </ul>
+    </div>
+
+    <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">Runescape Resource Terminal &mdash; BTC L1 F2P P2E &#x26CF;</p>
+  </div>
+</div>
+<!-- TX History Modal -->
+<div class="htp-modal-bg" id="txHistoryModal">
+  <div class="htp-box">
+    <button class="htp-close" onclick="document.getElementById('txHistoryModal').classList.remove('show')">&#x2715; CLOSE</button>
+    <h1>&#x1F4CB; TX HISTORY</h1>
+    <div class="htp-sub">Your interactions with this dapp &mdash; stored locally</div>
+    <div id="txHistoryList" style="max-height:400px;overflow-y:auto;"></div>
+    <button class="htp-btn" onclick="if(confirm('Clear TX history?')){localStorage.removeItem('rst_tx_history');openTxHistoryModal();}" style="margin-top:12px;background:#1a0a0a;border-color:#aa4444;color:#ff8888;">&#x1F5D1; CLEAR HISTORY</button>
+  </div>
+</div>
 <!-- Stake Modal -->
 <div class="modal-bg" id="stakeModal">
   <div class="modal-box" style="border-color:#44cc44">
@@ -773,12 +829,12 @@ button.conn-btn:hover { background: #243300; }
     <div style="margin-bottom:10px;">
       <div style="font-size:0.68em;color:#888;margin-bottom:4px">Lock Tier</div>
       <select id="stakeTierSelect" style="background:#0a1a0a;border:1px solid #44cc44;color:#44cc44;padding:6px;width:100%;font-family:monospace;font-size:0.78em;border-radius:3px;" onchange="updateStakeTierInfo()">
-        <option value="0">&#x1F513; Flexible (1&#xD7; sRST, 20% exit fee)</option>
-        <option value="1">&#x1F512; 30-day lock (5&#xD7; sRST, 10% exit fee)</option>
-        <option value="2">&#x1F512; 90-day lock (4&#xD7; sRST, 1% exit fee)</option>
-        <option value="3">&#x1F512; 180-day lock (2.5&#xD7; sRST, no exit fee)</option>
+        <option value="0">&#x1F513; Flexible (1&#xD7; sRST, unstake anytime)</option>
+        <option value="1">&#x1F512; 30-day lock (5&#xD7; sRST, HARD LOCK)</option>
+        <option value="2">&#x1F512; 90-day lock (4&#xD7; sRST, HARD LOCK)</option>
+        <option value="3">&#x1F512; 180-day lock (2.5&#xD7; sRST, HARD LOCK)</option>
       </select>
-      <div id="stakeTierHint" style="font-size:0.65em;color:#f7931a;margin-top:3px;text-align:center;">1&#xD7; multiplier &mdash; no lock &mdash; 20% early exit fee</div>
+      <div id="stakeTierHint" style="font-size:0.65em;color:#f7931a;margin-top:3px;text-align:center;">1&#xD7; multiplier &mdash; no lock &mdash; unstake anytime</div>
     </div>
     <div style="font-size:2.8em;color:#44cc44;margin:8px 0 2px" id="stakeDisplayAmt">10</div>
     <div style="font-size:0.68em;color:#666;margin-bottom:4px">RST to stake (min 10)</div>
@@ -833,9 +889,9 @@ button.conn-btn:hover { background: #243300; }
 <script>
 const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
 const RST_CONTRACT_PUBKEY = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
-// RSTStaking V2 MasterChef — deployed 2026-03-07
-const STAKING_CONTRACT = 'opt1sqpnwrzsteu0q9nllckgj0kwdw33xhlj7lvf3eyq4';
-const STAKING_CONTRACT_PUBKEY = '0x870445dc98bb046bb6dd1f6984174b5b2bac9c70a1259ce3f4801a992bf4fa1c';
+// RSTStaking V2 MasterChef — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender)
+const STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
+const STAKING_CONTRACT_PUBKEY = '0x8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
 // RST v8 — hardcoded server MLDSA hash as minter in onDeployment
 const RST_V2_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
 const RST_V2_CONTRACT_HEX = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
@@ -857,6 +913,8 @@ let sRSTBalance = 0;       // sRST balance
 let vaultRatio = 1.0;      // legacy — kept for unstake preview fallback
 let pendingWithdrawalRST = 0;  // legacy — kept for old staking contract compatibility
 let pendingRewardsRST = 0; // RST rewards claimable from MasterChef staking
+let lastClaimRewardsTime = 0; // cooldown — skip on-chain rewards fetch for 2 min after claiming
+let mempoolDisplay = 0;    // RST in mempool/claimable (updated by refreshBalance)
 
 function sha256PureJS(data) {
   const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
@@ -1048,7 +1106,7 @@ async function refreshBalance() {
     const claimable = await fetchClaimableOf();
     const claimableRst = Number(claimable) / 1e18;
     // Use on-chain confirmed value if larger, otherwise server-tracked (covers in-mempool case)
-    const mempoolDisplay = claimableRst > serverGrantedRst ? claimableRst : serverGrantedRst;
+    mempoolDisplay = claimableRst > serverGrantedRst ? claimableRst : serverGrantedRst;
     document.getElementById('statRST').textContent = serverPendingRst.toFixed(4) + ' RST';
     document.getElementById('statRSTMempool').textContent = mempoolDisplay.toFixed(4) + ' RST';
     // If claimableOf > 0, transition to ready_to_sign from idle OR in_progress (SSE reconnect recovery)
@@ -1227,10 +1285,10 @@ function getStakeTierMultiplier(tier) {
 function updateStakeTierInfo() {
   var tier = parseInt(document.getElementById('stakeTierSelect').value) || 0;
   var hints = [
-    '1\u00D7 multiplier \u2014 no lock \u2014 20% early exit fee',
-    '5\u00D7 multiplier \u2014 30-day lock \u2014 10% early exit fee',
-    '4\u00D7 multiplier \u2014 90-day lock \u2014 1% early exit fee',
-    '2.5\u00D7 multiplier \u2014 180-day lock \u2014 no exit fee',
+    '1\u00D7 multiplier \u2014 no lock \u2014 20% exit fee',
+    '5\u00D7 multiplier \u2014 30-day HARD LOCK \u2014 10% exit fee after lock',
+    '4\u00D7 multiplier \u2014 90-day HARD LOCK \u2014 5% exit fee after lock',
+    '2.5\u00D7 multiplier \u2014 180-day HARD LOCK \u2014 1% exit fee after lock',
   ];
   var hintEl = document.getElementById('stakeTierHint');
   if (hintEl) hintEl.textContent = hints[tier] || hints[0];
@@ -1282,6 +1340,34 @@ async function refreshOnlinePlayers() {
   } catch (e) {}
 }
 
+function addTxHistoryEntry(type, details, txid) {
+  var history = JSON.parse(localStorage.getItem('rst_tx_history') || '[]');
+  history.unshift({ type: type, details: details, txid: txid || null, ts: Date.now() });
+  if (history.length > 50) history.pop();
+  localStorage.setItem('rst_tx_history', JSON.stringify(history));
+}
+
+function openTxHistoryModal() {
+  var history = JSON.parse(localStorage.getItem('rst_tx_history') || '[]');
+  var listEl = document.getElementById('txHistoryList');
+  if (!history.length) {
+    listEl.innerHTML = '<div style="color:#555;font-size:0.75em;text-align:center;padding:20px;">No transactions yet.</div>';
+  } else {
+    listEl.innerHTML = history.map(function(e) {
+      var d = new Date(e.ts);
+      var ds = d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+      var txLink = e.txid ? '<div style="margin-top:2px;"><a href="https://testnet.opnet.org/tx/' + e.txid + '" target="_blank" style="color:#8888ff;font-size:0.65em;text-decoration:underline;">' + e.txid.slice(0,20) + '...</a></div>' : '';
+      return '<div style="padding:7px 0;border-bottom:1px solid #1a1600;">' +
+        '<div style="color:#f0c030;font-size:0.75em;font-weight:bold;">' + e.type + '</div>' +
+        '<div style="color:#aaa;font-size:0.7em;margin-top:1px;">' + e.details + '</div>' +
+        txLink +
+        '<div style="color:#555;font-size:0.63em;margin-top:2px;">' + ds + '</div>' +
+        '</div>';
+    }).join('');
+  }
+  document.getElementById('txHistoryModal').classList.add('show');
+}
+
 function openStakeModal() {
   if (stakePhase === 'approval_pending') return; // grayed out, not clickable
   const savedAmt = parseFloat(localStorage.getItem('rst_stake_amount') || '') || 10;
@@ -1304,22 +1390,27 @@ function openStakeModal() {
 }
 
 async function pollApprovalConfirmation() {
+  var seenPending = false;
+  // Wait 10s before first check — gives TX time to propagate to mempool
+  await new Promise(r => setTimeout(r, 10000));
   while (stakePhase === 'approval_pending') {
-    await new Promise(r => setTimeout(r, 5000));
     if (stakePhase !== 'approval_pending') break;
     try {
       const walletAddr = wallet || localStorage.getItem('rst_stake_wallet');
-      if (!walletAddr) continue;
+      if (!walletAddr) { await new Promise(r => setTimeout(r, 5000)); continue; }
       const res = await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_getUTXOs', params: [walletAddr, true] }) });
       const json = await res.json();
       const pending = (json?.result?.pending || []).length;
-      if (pending === 0) {
+      if (pending > 0) seenPending = true;
+      // Only mark confirmed after we've actually seen the TX in the mempool
+      if (seenPending && pending === 0) {
         stakePhase = 'approval_confirmed';
         localStorage.setItem('rst_stake_phase', 'approval_confirmed');
         updateStakeBtnPhase();
         break;
       }
     } catch {}
+    await new Promise(r => setTimeout(r, 5000));
   }
 }
 // Start polling on page load if a previous session left approval pending
@@ -1429,6 +1520,8 @@ async function executeStakeNow() {
     localStorage.removeItem('rst_stake_amount');
     localStorage.removeItem('rst_stake_tier');
     isStaked = true;
+    var tierNames = ['Flexible', '30-day', '90-day', '180-day'];
+    addTxHistoryEntry('\u26A1 STAKED RST', amount + ' RST staked \u2014 ' + (tierNames[tierIndex] || 'Flexible') + ' tier');
     setStatus('\u2705 Staked! Full world unlocked.', 'success');
     document.getElementById('stakeBtn').style.display = 'none';
     document.getElementById('stakedBadge').style.display = 'block';
@@ -1475,6 +1568,41 @@ async function checkStakeStatus() {
       if (stakeBtn) stakeBtn.style.display = 'none';
       if (stakedBadge) stakedBadge.style.display = 'block';
       if (unstakeBtn) unstakeBtn.style.display = 'block';
+
+      // Fetch tier info to check hard lock
+      try {
+        const tierCalldata = '7f07774d' + mldsaHash.padStart(64, '0');
+        const tierResult = await opnetRpc('btc_call', [STAKING_CONTRACT, tierCalldata, null, null]);
+        const tierRaw = typeof tierResult === 'string' ? tierResult : (tierResult?.result ?? tierResult?.data ?? '');
+        const tierHex = decodeU256Hex(tierRaw);
+        if (tierHex.length >= 128) {
+          const tierIdx = Number(BigInt('0x' + tierHex.slice(0, 64)));
+          const lockEnd = BigInt('0x' + tierHex.slice(64, 128));
+          // Fetch current block number
+          var currentBlock = -1n;
+          try {
+            const blkRes = await opnetRpc('btc_blockNumber', []);
+            const blkVal = blkRes?.result ?? blkRes;
+            if (blkVal != null) currentBlock = BigInt(blkVal);
+          } catch {}
+          // If we couldn't get block number, assume locked if lockEnd > 0
+          const isLocked = tierIdx > 0 && lockEnd > 0n && (currentBlock < 0n || currentBlock < lockEnd);
+          if (unstakeBtn) {
+            if (isLocked) {
+              unstakeBtn.textContent = '\uD83D\uDD12 LOCKED \u2014 BLOCK ' + lockEnd.toString();
+              unstakeBtn.style.opacity = '0.5';
+              unstakeBtn.style.cursor = 'default';
+              unstakeBtn.onclick = null;
+            } else {
+              var tierLabels = ['Flexible (20% fee)', '30-day (10% fee)', '90-day (5% fee)', '180-day (1% fee)'];
+              unstakeBtn.textContent = '\u21A9 UNSTAKE sRST \u2014 ' + (tierLabels[tierIdx] || '');
+              unstakeBtn.style.opacity = '1';
+              unstakeBtn.style.cursor = 'pointer';
+              unstakeBtn.onclick = function() { openUnstakeModal(); };
+            }
+          }
+        }
+      } catch {}
     } else {
       if (stakedBadge) stakedBadge.style.display = 'none';
       if (unstakeBtn) unstakeBtn.style.display = 'none';
@@ -1488,11 +1616,23 @@ async function checkStakeStatus() {
       const rewardsRaw = typeof rewardsResult === 'string' ? rewardsResult : (rewardsResult?.result ?? rewardsResult?.data ?? '');
       const rewardsHex = decodeU256Hex(rewardsRaw);
       const rewardsWei = rewardsHex.length >= 64 ? BigInt('0x' + rewardsHex.slice(0, 64)) : 0n;
-      pendingRewardsRST = Number(rewardsWei) / 1e18;
+      // Skip stale on-chain value for 2 min after claiming — TX not confirmed yet
+      if (Date.now() - lastClaimRewardsTime > 120000) {
+        pendingRewardsRST = Number(rewardsWei) / 1e18;
+      }
       const rewardsEl = document.getElementById('statPendingRewards');
       if (rewardsEl) rewardsEl.textContent = pendingRewardsRST > 0 ? pendingRewardsRST.toFixed(6) + ' RST' : '0 RST';
       const claimRewardsBtn = document.getElementById('claimRewardsBtn');
-      if (claimRewardsBtn) claimRewardsBtn.style.display = (sRSTBalance > 0 && pendingRewardsRST > 0.000001) ? 'block' : 'none';
+      if (claimRewardsBtn) {
+        const shouldShow = sRSTBalance > 0 && pendingRewardsRST > 0.000001;
+        if (shouldShow) {
+          claimRewardsBtn.textContent = '\uD83D\uDCB0 CLAIM REWARDS';
+          claimRewardsBtn.disabled = false;
+          claimRewardsBtn.style.display = 'block';
+        } else {
+          claimRewardsBtn.style.display = 'none';
+        }
+      }
     } catch {}
 
     // Legacy: check pending withdrawal from old staking contract (no-op on V2)
@@ -1581,6 +1721,7 @@ async function executeUnstake() {
 
     isStaked = false;
     sRSTBalance = Math.max(0, sRSTBalance - amount);
+    addTxHistoryEntry('\u21A9 UNSTAKED sRST', amount.toFixed(4) + ' sRST unstaked');
     setStatus('\u23F3 Unstaked! Timelock: 1 block. Withdraw button will appear shortly.', 'success');
     document.getElementById('stakeBtn').style.display = 'none';
     document.getElementById('stakedBadge').style.display = 'none';
@@ -1672,7 +1813,9 @@ async function executeClaimRewards() {
       if (signed.fundingTransaction) await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_sendRawTransaction', params: [signed.fundingTransaction, false] }) });
       await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_sendRawTransaction', params: [signed.interactionTransaction, false] }) });
     } else { await web3.signAndBroadcastInteraction(params); }
+    addTxHistoryEntry('\uD83D\uDCB0 CLAIMED REWARDS', pendingRewardsRST.toFixed(4) + ' RST staking rewards claimed');
     pendingRewardsRST = 0;
+    lastClaimRewardsTime = Date.now();
     btn.textContent = '\u2705 Claimed!';
     btn.style.display = 'none';
     const rewardsEl = document.getElementById('statPendingRewards');
@@ -1840,7 +1983,13 @@ async function openClaimModal() {
         if (claimBtn) { claimBtn.disabled = false; claimBtn.textContent = 'CLAIM RST'; }
         return;
       }
-      alert('No RST pending yet. Sell resources to the RST merchant first!');
+      if (mempoolDisplay > 0) {
+        // grantClaim TX is in mempool but not yet indexed by OPNet — auto-poll so modal opens when ready
+        if (!claimPollInterval && mldsaHash) pollClaimableUntilReady(mldsaHash);
+        alert('Your RST is on the way! Confirming on-chain (~1 min). The sign window will open automatically.');
+      } else {
+        alert('No RST pending yet. Sell resources to the RST merchant first!');
+      }
       return;
     }
     mintData = { rstAmount: gp / 1000, gpAmount: gp, rstWei: (BigInt(gp) * (10n ** 18n) / 1000n).toString(), wallet };
@@ -1954,6 +2103,7 @@ async function executeMint() {
     if (claimPollInterval) { clearInterval(claimPollInterval); claimPollInterval = null; }
     mintState = 'idle';
     lastMintTime = Date.now();
+    addTxHistoryEntry('\u26CF RST CLAIMED', (d.rstAmount || 0).toFixed(4) + ' RST claimed from game', claimTxid);
     setModalStatus('SUCCESS! ' + (d.rstAmount || 0).toFixed(4) + ' RST claimed!', 'success');
     const txLinkEl = document.getElementById('claimTxLink');
     if (txLinkEl && claimTxid) {
@@ -1967,9 +2117,21 @@ async function executeMint() {
     setTimeout(() => { dismissModal(); refreshBalance(); refreshWalletBalances(); fetchLeaderboard(); }, 8000);
   } catch(e) {
     console.error('[RST] executeMint error:', e);
-    setModalStatus('Failed: ' + (e.message || String(e)), 'error');
-    document.getElementById('signBtn').disabled = false;
-    document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+    const errMsg = e.message || String(e);
+    // RBF rejection = claim TX is already in the mempool from a prior attempt.
+    // Do NOT re-enable the button — the TX is in flight and a second claim would be a duplicate.
+    if (errMsg.includes('rejecting replacement') || errMsg.includes('less fees than conflicting') || errMsg.includes('conflicting txs')) {
+      mintState = 'in_progress';
+      setModalStatus('You have a claim in progress! Your TX is already in the mempool — it should confirm in ~1 min. No need to sign again.', 'info');
+      document.getElementById('signBtn').disabled = true;
+      document.getElementById('signBtn').textContent = 'CLAIM IN PROGRESS...';
+      // Poll for confirmation: once claimableOf drops to 0, state resets automatically
+      setTimeout(() => { refreshBalance(); refreshWalletBalances(); }, 90000);
+    } else {
+      setModalStatus('Failed: ' + errMsg, 'error');
+      document.getElementById('signBtn').disabled = false;
+      document.getElementById('signBtn').textContent = 'SIGN & CLAIM WITH OP_WALLET';
+    }
   }
 }
 
@@ -2059,6 +2221,15 @@ function checkAdminPanel() {
     '<div class="stat-row"><span>v2 Contract</span><span style="color:#ff4444;font-size:0.65em;">DEPLOYER</span></div>' +
     '<button class="admin-btn" id="setMinterBtn" onclick="executeSetMinter()">SET MINTER</button>' +
     '<button class="admin-btn" id="setLPBtn" onclick="executeSetLPPair()" style="margin-top:6px;">SET LP PAIR</button>' +
+    '<div style="margin-top:8px;display:flex;gap:4px;align-items:center;">' +
+    '<input id="fundAmountInput" type="number" value="100" min="1" max="10000" style="width:70px;background:#1a0a0a;border:1px solid #cc0000;color:#fff;font-family:monospace;font-size:0.75em;padding:4px;border-radius:3px;" />' +
+    '<span style="color:#aaa;font-size:0.72em;">RST</span>' +
+    '<button class="admin-btn" id="fundRewardBtn" onclick="executeFundRewardPool()" style="margin-top:0;flex:1;">FUND POOL</button>' +
+    '</div>' +
+    '<div style="margin-top:8px;">' +
+    '<input id="broadcastInput" type="text" placeholder="World message..." style="width:100%;background:#1a0a0a;border:1px solid #cc0000;color:#fff;font-family:monospace;font-size:0.75em;padding:4px 6px;border-radius:3px;margin-bottom:4px;" />' +
+    '<button class="admin-btn" onclick="executeBroadcast()" style="margin-top:0;">&#x1F4E2; WORLD BROADCAST</button>' +
+    '</div>' +
     '<div id="adminStatus" class="modal-status" style="margin-top:8px;font-size:0.72em;min-height:16px;"></div>';
 
   // Insert before the first .s-section (leaderboard area) so it appears above links
@@ -2186,6 +2357,84 @@ async function executeSetLPPair() {
   }
 }
 
+async function executeFundRewardPool() {
+  if (!wallet) { setAdminStatus('No wallet connected.', 'error'); return; }
+
+  const btn = document.getElementById('fundRewardBtn');
+  const amtInput = document.getElementById('fundAmountInput');
+  const rstAmount = parseInt(amtInput.value, 10) || 100;
+  btn.disabled = true;
+  btn.textContent = 'SIGNING...';
+  setAdminStatus('Funding staking reward pool with ' + rstAmount + ' RST...', 'info');
+
+  try {
+    const web3 = window.opnet?.web3;
+    if (!web3) { setAdminStatus('OP_WALLET not found.', 'error'); btn.disabled = false; btn.textContent = 'FUND POOL'; return; }
+
+    // RST.transfer(to, amount)
+    // selector: 3b88ef57 (transfer(address,uint256))
+    // to:       329994247d73f2a3a8424bac127dbd2d8e22dd0d3185c27fc300f4d12028a200 (staking contract tweaked pubkey)
+    // amount:   rstAmount × 10^18 in 32-byte big-endian
+    const stakingPubkeyHex = STAKING_CONTRACT_PUBKEY.startsWith('0x') ? STAKING_CONTRACT_PUBKEY.slice(2) : STAKING_CONTRACT_PUBKEY;
+    const amountWei = (BigInt(rstAmount) * (10n ** 18n)).toString(16).padStart(64, '0');
+    const calldata = hexToBytes('3b88ef57' + stakingPubkeyHex.padStart(64, '0') + amountWei);
+
+    setAdminStatus('Fetching UTXOs...', 'info');
+    const utxos = await fetchUTXOs(wallet);
+    if (!utxos.length) {
+      setAdminStatus('No UTXOs found. Fund your deployer wallet.', 'error');
+      btn.disabled = false; btn.textContent = 'FUND POOL'; return;
+    }
+
+    const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
+    const params = {
+      to: RST_V2_CONTRACT,
+      contract: RST_V2_CONTRACT_HEX,
+      calldata,
+      from: wallet,
+      utxos,
+      feeRate: 10,
+      priorityFee: BigInt(0),
+      gasSatFee: BigInt(20000),
+      network,
+      linkMLDSAPublicKeyToAddress: true,
+      revealMLDSAPublicKey: false,
+    };
+
+    setAdminStatus('Check OP_WALLET to sign...', 'info');
+    if (typeof web3.signAndBroadcastInteraction === 'function') {
+      await web3.signAndBroadcastInteraction(params);
+    } else {
+      const signed = await web3.signInteraction(params);
+      if (signed.fundingTransaction) await broadcastOpnet(signed.fundingTransaction);
+      await broadcastOpnet(signed.interactionTransaction);
+    }
+
+    setAdminStatus(rstAmount + ' RST sent to staking vault! Rewards will flow once TX confirms.', 'success');
+    btn.textContent = 'FUND POOL';
+  } catch (e) {
+    setAdminStatus('Failed: ' + (e.message || String(e)), 'error');
+    btn.disabled = false;
+    btn.textContent = 'FUND POOL';
+  }
+}
+
+async function executeBroadcast() {
+  const input = document.getElementById('broadcastInput');
+  const msg = input ? input.value.trim() : '';
+  if (!msg) { setAdminStatus('Enter a message first.', 'error'); return; }
+  try {
+    setAdminStatus('Broadcasting...', 'info');
+    const res = await fetch('/admin/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) });
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || 'Failed');
+    setAdminStatus('Sent to ' + json.players + ' player(s).', 'success');
+    if (input) input.value = '';
+  } catch (e) {
+    setAdminStatus('Broadcast failed: ' + (e.message || String(e)), 'error');
+  }
+}
+
 async function fetchLeaderboard() {
   try {
     const r = await fetch('/rst/leaderboard');
@@ -2206,14 +2455,14 @@ async function fetchLeaderboard() {
 
 // ─── HTP Language System ──────────────────────────────────────────────────────
 var DIFF_LANGS = {
-  en: { label:'Difficulty', xhc_hint:'No player trading \u2014 earn 10 RST to unlock', hard_hint:'10,000 GP trade cap \u2014 stake to unlock full world', easy_hint:'Full world \u2014 unlimited trading', full_hint:'Staked \u2014 full world unlocked' },
-  es: { label:'Dificultad', xhc_hint:'Sin comercio \u2014 gana 10 RST para desbloquear', hard_hint:'L\xEDmite 10,000 GP \u2014 apuesta para desbloquear', easy_hint:'Mundo completo \u2014 comercio ilimitado', full_hint:'Apostado \u2014 mundo completo desbloqueado' },
-  fr: { label:'Difficult\xE9', xhc_hint:'Pas d\u2019\xE9change \u2014 gagnez 10 RST pour d\xE9bloquer', hard_hint:'Plafond 10 000 PO \u2014 misez pour d\xE9bloquer', easy_hint:'Monde entier \u2014 commerce illimit\xE9', full_hint:'Mis\xE9 \u2014 monde entier d\xE9bloqu\xE9' },
-  zh: { label:'\u96BE\u5EA6', xhc_hint:'\u65E0\u6CD5\u4EA4\u6613 \u2014 \u83B7\u5F9710 RST\u89E3\u9501', hard_hint:'1\u4E07GP\u4EA4\u6613\u4E0A\u9650 \u2014 \u8D28\u62BC\u89E3\u9501\u5168\u56FE', easy_hint:'\u5168\u5730\u56FE \u2014 \u65E0\u9650\u5236\u4EA4\u6613', full_hint:'\u5DF2\u8D28\u62BC \u2014 \u5168\u5730\u56FE\u89E3\u9501' },
-  de: { label:'Schwierigkeit', xhc_hint:'Kein Handel \u2014 10 RST verdienen zum Freischalten', hard_hint:'10.000 GP Limit \u2014 staken f\xFCr volle Welt', easy_hint:'Volle Welt \u2014 unbegrenzter Handel', full_hint:'Gestakt \u2014 volle Welt freigeschaltet' },
-  fa: { label:'\u0633\u062E\u062A\u06CC', xhc_hint:'\u0628\u062F\u0648\u0646 \u062A\u062C\u0627\u0631\u062A \u2014 10 RST \u06A9\u0633\u0628 \u06A9\u0646\u06CC\u062F', hard_hint:'\u0633\u0642\u0641 10,000 GP \u2014 \u0634\u0631\u0637\u200C\u0628\u0646\u062F\u06CC \u0628\u0631\u0627\u06CC \u0628\u0627\u0632\u06A9\u0631\u062F\u0646', easy_hint:'\u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0645\u0644 \u2014 \u062A\u062C\u0627\u0631\u062A \u0622\u0632\u0627\u062F', full_hint:'\u0634\u0631\u0637\u200C\u0628\u0646\u062F\u06CC \u0634\u062F\u0647 \u2014 \u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0645\u0644' },
-  pt: { label:'Dificuldade', xhc_hint:'Sem com\xE9rcio \u2014 ganhe 10 RST para desbloquear', hard_hint:'Limite 10.000 PO \u2014 aposte para desbloquear', easy_hint:'Mundo completo \u2014 com\xE9rcio ilimitado', full_hint:'Apostado \u2014 mundo completo desbloqueado' },
-  ja: { label:'\u96E3\u6613\u5EA6', xhc_hint:'\u53D6\u5F15\u4E0D\u53EF \u2014 RST 10\u679A\u3067\u89E3\u653E', hard_hint:'GP\u4E0A\u9650 1\u4E07 \u2014 \u30B9\u30C6\u30FC\u30AF\u3067\u5168\u30DE\u30C3\u30D7\u89E3\u653E', easy_hint:'\u5168\u30DE\u30C3\u30D7 \u2014 \u5236\u9650\u306A\u3057\u53D6\u5F15', full_hint:'\u30B9\u30C6\u30FC\u30AF\u6E08 \u2014 \u5168\u30DE\u30C3\u30D7\u89E3\u653E' },
+  en: { label:'Difficulty', xhc_hint:'No player trading \u2014 earn 10 RST to unlock', hard_hint:'Stake your RST to earn more', easy_hint:'Full world \u2014 unlimited trading', full_hint:'Staked \u2014 full world unlocked' },
+  es: { label:'Dificultad', xhc_hint:'Sin comercio \u2014 gana 10 RST para desbloquear', hard_hint:'Apuesta tu RST para ganar m\xE1s', easy_hint:'Mundo completo \u2014 comercio ilimitado', full_hint:'Apostado \u2014 mundo completo desbloqueado' },
+  fr: { label:'Difficult\xE9', xhc_hint:'Pas d\u2019\xE9change \u2014 gagnez 10 RST pour d\xE9bloquer', hard_hint:'Misez votre RST pour gagner plus', easy_hint:'Monde entier \u2014 commerce illimit\xE9', full_hint:'Mis\xE9 \u2014 monde entier d\xE9bloqu\xE9' },
+  zh: { label:'\u96BE\u5EA6', xhc_hint:'\u65E0\u6CD5\u4EA4\u6613 \u2014 \u83B7\u5F9710 RST\u89E3\u9501', hard_hint:'\u8D28\u62BC RST \u83B7\u5F97\u66F4\u591A\u6536\u76CA', easy_hint:'\u5168\u5730\u56FE \u2014 \u65E0\u9650\u5236\u4EA4\u6613', full_hint:'\u5DF2\u8D28\u62BC \u2014 \u5168\u5730\u56FE\u89E3\u9501' },
+  de: { label:'Schwierigkeit', xhc_hint:'Kein Handel \u2014 10 RST verdienen zum Freischalten', hard_hint:'Stake dein RST f\xFCr mehr Ertrag', easy_hint:'Volle Welt \u2014 unbegrenzter Handel', full_hint:'Gestakt \u2014 volle Welt freigeschaltet' },
+  fa: { label:'\u0633\u062E\u062A\u06CC', xhc_hint:'\u0628\u062F\u0648\u0646 \u062A\u062C\u0627\u0631\u062A \u2014 10 RST \u06A9\u0633\u0628 \u06A9\u0646\u06CC\u062F', hard_hint:'RST \u062E\u0648\u062F \u0631\u0627 \u0634\u0631\u0637\u200C\u0628\u0646\u062F\u06CC \u06A9\u0646\u06CC\u062F \u0648 \u0628\u06CC\u0634\u062A\u0631 \u06A9\u0633\u0628 \u06A9\u0646\u06CC\u062F', easy_hint:'\u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0645\u0644 \u2014 \u062A\u062C\u0627\u0631\u062A \u0622\u0632\u0627\u062F', full_hint:'\u0634\u0631\u0637\u200C\u0628\u0646\u062F\u06CC \u0634\u062F\u0647 \u2014 \u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0645\u0644' },
+  pt: { label:'Dificuldade', xhc_hint:'Sem com\xE9rcio \u2014 ganhe 10 RST para desbloquear', hard_hint:'Aposte seu RST para ganhar mais', easy_hint:'Mundo completo \u2014 com\xE9rcio ilimitado', full_hint:'Apostado \u2014 mundo completo desbloqueado' },
+  ja: { label:'\u96E3\u6613\u5EA6', xhc_hint:'\u53D6\u5F15\u4E0D\u53EF \u2014 RST 10\u679A\u3067\u89E3\u653E', hard_hint:'RST\u3092\u30B9\u30C6\u30FC\u30AF\u3057\u3066\u3082\u3063\u3068\u7A3C\u304C\u3046', easy_hint:'\u5168\u30DE\u30C3\u30D7 \u2014 \u5236\u9650\u306A\u3057\u53D6\u5F15', full_hint:'\u30B9\u30C6\u30FC\u30AF\u6E08 \u2014 \u5168\u30DE\u30C3\u30D7\u89E3\u653E' },
 };
 
 var HTP_LANGS = {
@@ -2567,28 +2816,110 @@ function setHTPLang(lang) {
             const exportCollisionResponse = handleExportCollisionApi(url);
             if (exportCollisionResponse) return exportCollisionResponse;
 
-            // RST Leaderboard — replaces the broken skill-based hiscores
+            // RST Leaderboard
             if (url.pathname === '/hiscores' || url.pathname === '/hiscores/') {
                 const { totalGPConverted, RST_GP_PER_TOKEN } = await import('../engine/pill/PillMerchant.js');
                 const entries = Array.from(totalGPConverted.entries())
-                    .sort((a, b) => b[1] - a[1]);
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 50);
+
+                // Batch-enrich from DB: playtime, skill levels, bank value
+                const SKILL_TYPE = { wc: 9, mining: 15, smithing: 14, cooking: 8, fishing: 11 };
+                let playtimeMap = new Map<string, number>();   // username.lower → ticks
+                let skillsMap   = new Map<string, Record<string, number>>(); // username.lower → {wc,mining,...}
+                let wealthMap   = new Map<string, number>();   // username.lower → gp value
+
+                if (entries.length > 0) {
+                    const usernames = entries.map(([u]) => u.toLowerCase());
+                    const accounts = await db.selectFrom('account')
+                        .select(['id', 'username'])
+                        .where(eb => eb(eb.fn('lower', ['username']), 'in', usernames))
+                        .execute();
+                    const idByName = new Map(accounts.map(a => [a.username.toLowerCase(), a.id]));
+                    const ids = accounts.map(a => a.id);
+
+                    if (ids.length > 0) {
+                        // Playtime
+                        const ptRows = await db.selectFrom('hiscore_large')
+                            .innerJoin('account', 'account.id', 'hiscore_large.account_id')
+                            .select(['account.username', 'hiscore_large.playtime'])
+                            .where('hiscore_large.type', '=', 0)
+                            .where('hiscore_large.profile', '=', 'main')
+                            .where('hiscore_large.account_id', 'in', ids)
+                            .execute();
+                        for (const r of ptRows) playtimeMap.set(r.username.toLowerCase(), r.playtime);
+
+                        // Skill levels
+                        const skRows = await db.selectFrom('hiscore')
+                            .innerJoin('account', 'account.id', 'hiscore.account_id')
+                            .select(['account.username', 'hiscore.type', 'hiscore.level'])
+                            .where('hiscore.type', 'in', Object.values(SKILL_TYPE))
+                            .where('hiscore.profile', '=', 'main')
+                            .where('hiscore.account_id', 'in', ids)
+                            .execute();
+                        for (const r of skRows) {
+                            const key = r.username.toLowerCase();
+                            if (!skillsMap.has(key)) skillsMap.set(key, {});
+                            skillsMap.get(key)![r.type] = r.level;
+                        }
+
+                        // Bank/outfit value
+                        const wRows = await db.selectFrom('hiscore_outfit')
+                            .innerJoin('account', 'account.id', 'hiscore_outfit.account_id')
+                            .select(['account.username', 'hiscore_outfit.value'])
+                            .where('hiscore_outfit.profile', '=', 'main')
+                            .where('hiscore_outfit.account_id', 'in', ids)
+                            .execute();
+                        for (const r of wRows) wealthMap.set(r.username.toLowerCase(), r.value);
+                    }
+                }
+
+                function fmtGP(v: number): string {
+                    if (v >= 1_000_000) return (v / 1_000_000).toFixed(2) + 'M';
+                    if (v >= 1_000) return (v / 1_000).toFixed(1) + 'K';
+                    return v.toLocaleString();
+                }
+                function fmtTicks(ticks: number): string {
+                    const secs = Math.floor(ticks * (Environment.NODE_TICKRATE / 1000));
+                    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+                    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+                }
+                function skillCell(skills: Record<string, number> | undefined, type: number): string {
+                    const lvl = skills?.[type] ?? 1;
+                    const col = lvl >= 99 ? '#f0c030' : lvl >= 70 ? '#44cc44' : lvl >= 50 ? '#aaa' : '#555';
+                    return `<td style="padding:4px 8px;color:${col};text-align:center;">${lvl}</td>`;
+                }
+
                 const rows = entries.map(([username, gp], i) => {
-                    const rst = (gp / RST_GP_PER_TOKEN).toFixed(4);
-                    const gpFmt = gp >= 1_000_000 ? (gp / 1_000_000).toFixed(2) + 'M' : gp >= 1_000 ? (gp / 1_000).toFixed(1) + 'K' : gp.toLocaleString();
-                    const rankColor = i === 0 ? '#f0c030' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : '#888';
+                    const rst = (gp / RST_GP_PER_TOKEN).toFixed(2);
+                    const key = username.toLowerCase();
+                    const rankColor = i === 0 ? '#f0c030' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : '#c0a060';
+                    const pt = playtimeMap.get(key);
+                    const skills = skillsMap.get(key);
+                    const wealth = wealthMap.get(key);
                     return `<tr>
-                        <td style="padding:6px 10px;color:#444;font-size:0.85em;">#\${i + 1}</td>
-                        <td style="padding:6px 10px;color:\${rankColor};">\${username}</td>
-                        <td style="padding:6px 10px;color:#f0c030;text-align:right;">\${gpFmt} GP</td>
-                        <td style="padding:6px 10px;color:#44cc44;text-align:right;">\${rst} RST</td>
+                        <td style="padding:4px 8px;color:#555;font-size:0.85em;">${i + 1}</td>
+                        <td style="padding:4px 8px;color:${rankColor};font-weight:bold;">${username}</td>
+                        <td style="padding:4px 8px;color:#f0c030;text-align:right;">${fmtGP(gp)}</td>
+                        <td style="padding:4px 8px;color:#44cc44;text-align:right;">${rst}</td>
+                        <td style="padding:4px 8px;color:#888;text-align:right;">${pt != null ? fmtTicks(pt) : '-'}</td>
+                        <td style="padding:4px 8px;color:#f7931a;text-align:right;">${wealth != null ? fmtGP(wealth) : '-'}</td>
+                        ${skillCell(skills, SKILL_TYPE.wc)}
+                        ${skillCell(skills, SKILL_TYPE.mining)}
+                        ${skillCell(skills, SKILL_TYPE.smithing)}
+                        ${skillCell(skills, SKILL_TYPE.cooking)}
+                        ${skillCell(skills, SKILL_TYPE.fishing)}
                     </tr>`;
                 }).join('');
-                const noRows = entries.length === 0 ? '<tr><td colspan="4" style="padding:20px;text-align:center;color:#444;">No conversions yet — start playing!</td></tr>' : '';
+                const noRows = entries.length === 0
+                    ? '<tr><td colspan="11" style="padding:20px;text-align:center;color:#444;">No conversions yet — start playing!</td></tr>'
+                    : '';
+
                 const rstHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>RST Leaderboard — Runescape Resource Terminal</title>
+<title>RST Hiscores — Runescape Resource Terminal</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#0e0e0e; color:#c0a060; font-family:'Courier New',monospace; min-height:100vh; }
@@ -2596,31 +2927,39 @@ header { background:#1a1200; border-bottom:2px solid #4a3800; padding:0 20px; he
 .logo { color:#f0c030; font-size:1em; font-weight:bold; letter-spacing:2px; }
 .back { background:#1a1200; border:1px solid #f0c030; color:#f0c030; padding:5px 14px; font-family:monospace; font-size:0.72em; border-radius:3px; text-decoration:none; }
 .back:hover { background:#2a2000; }
-.wrap { max-width:700px; margin:30px auto; padding:0 16px; }
+.wrap { max-width:1100px; margin:30px auto; padding:0 16px; overflow-x:auto; }
 h1 { color:#f0c030; font-size:1em; letter-spacing:3px; text-transform:uppercase; margin-bottom:4px; }
 .sub { color:#555; font-size:0.72em; margin-bottom:20px; border-bottom:1px solid #1e1600; padding-bottom:12px; }
-table { width:100%; border-collapse:collapse; }
-th { color:#888; font-size:0.68em; letter-spacing:1px; text-transform:uppercase; padding:6px 10px; border-bottom:2px solid #2a2000; text-align:left; }
-th:last-child, th:nth-child(3) { text-align:right; }
+table { width:100%; border-collapse:collapse; white-space:nowrap; }
+th { color:#888; font-size:0.65em; letter-spacing:1px; text-transform:uppercase; padding:6px 8px; border-bottom:2px solid #2a2000; text-align:left; }
+th.r { text-align:right; } th.c { text-align:center; }
 tr:nth-child(even) { background:#0a0a0a; }
-tr:hover { background:#111; }
+tr:hover { background:#141000; }
+.skill-hdr { color:#4a6; font-size:0.62em; }
 </style>
 </head>
 <body>
 <header>
-  <span class="logo">&#x26CF; RST LEADERBOARD</span>
+  <span class="logo">&#x26CF; RST HISCORES</span>
   <a href="/play" class="back">&#x2190; BACK TO GAME</a>
 </header>
 <div class="wrap">
-  <h1>&#x1F3C6; GP Conversion Leaderboard</h1>
+  <h1>&#x1F3C6; Runescape Resource Terminal — Hiscores</h1>
   <p class="sub">All-time GP converted to RST &mdash; updated live &mdash; ${entries.length} players</p>
   <table>
     <thead>
       <tr>
-        <th>Rank</th>
+        <th>#</th>
         <th>Player</th>
-        <th>GP Converted</th>
-        <th>RST Earned</th>
+        <th class="r">GP Converted</th>
+        <th class="r">RST Earned</th>
+        <th class="r">Time Played</th>
+        <th class="r">Bank Value</th>
+        <th class="c skill-hdr">WC</th>
+        <th class="c skill-hdr">Mining</th>
+        <th class="c skill-hdr">Smithing</th>
+        <th class="c skill-hdr">Cooking</th>
+        <th class="c skill-hdr">Fishing</th>
       </tr>
     </thead>
     <tbody>
