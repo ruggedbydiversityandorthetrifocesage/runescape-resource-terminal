@@ -4,6 +4,7 @@ import Npc from '#/engine/entity/Npc.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { mintRST, isMintConfigured, fetchRSTBalance, queueAddRewards } from './RSTMinter.js';
+import { stampBankLog } from './BankLogMinter.js';
 import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } from './TutorialTracker.js';
 
 // ============================================================
@@ -13,6 +14,8 @@ import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } fr
 // ============================================================
 export const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
 export const RST_GP_PER_TOKEN = 1000; // 1,000 GP = 1 RST
+export const FIRST_CLAIM_GP_MIN = 1000;      // first ever claim: 1,000 GP minimum
+export const SUBSEQUENT_CLAIM_GP_MIN = 10000; // all subsequent claims: 10,000 GP minimum
 
 // Cow NPC type IDs: 81=cow, 397=cow2, 955=cow3
 export const COW_NPC_IDS = new Set([81, 397, 955]);
@@ -34,6 +37,30 @@ const RESOURCE_PRICES: Record<number, number> = {
     447: 150,   // mithril ore
     449: 200,   // adamantite ore
     451: 400,   // runite ore
+    // Meat — Tier 0 combat drops (opportunity cost: could eat instead)
+    2132: 10,   // raw beef
+    2138: 10,   // raw chicken
+    // Fish (raw) — Tier 1 gathering
+    317: 5,     // raw shrimp
+    321: 8,     // raw anchovies
+    327: 8,     // raw sardine
+    345: 12,    // raw herring
+    335: 20,    // raw trout
+    331: 30,    // raw salmon
+    349: 15,    // raw pike
+    359: 60,    // raw tuna
+    377: 150,   // raw lobster
+    371: 200,   // raw swordfish
+    383: 500,   // raw shark
+    // Smelted bars — Tier 2 (3x ore value)
+    2349: 60,   // bronze bar  (copper 10 + tin 10 = 20 → x3)
+    2351: 90,   // iron bar    (iron 30 → x3)
+    2353: 100,  // steel bar   (iron + coal)
+    2355: 150,  // silver bar
+    2357: 300,  // gold bar    (gold 100 → x3)
+    2359: 450,  // mithril bar (mithril 150 → x3)
+    2361: 600,  // adamantite bar (adamantite 200 → x3)
+    2363: 1200, // runite bar  (runite 400 → x3)
 };
 
 // All general store shopkeepers and assistants across every city:
@@ -48,6 +75,19 @@ export const pendingGP = new Map<string, number>();         // GP accumulated bu
 export const grantedGP = new Map<string, number>();         // GP granted on-chain but not yet claimed by player
 export const totalGPConverted = new Map<string, number>();  // all-time leaderboard score
 export const stakedRegistry = new Map<string, number>();    // username → staked RST amount
+export const earnedRewardsRegistry = new Map<string, number>(); // wallet → cumulative sRST rewards claimed (RST)
+export const claimedRegistry = new Set<string>();               // usernames who have claimed RST at least once
+
+// Rolling activity log for analytics (last 24h of GP sale events)
+interface ActivityEvent { username: string; gp: number; timestamp: number; }
+export const activityLog: ActivityEvent[] = [];
+const MAX_ACTIVITY_AGE = 24 * 60 * 60 * 1000;
+export function recordActivity(username: string, gp: number): void {
+    const now = Date.now();
+    activityLog.push({ username, gp, timestamp: now });
+    const cutoff = now - MAX_ACTIVITY_AGE;
+    while (activityLog.length > 0 && activityLog[0].timestamp < cutoff) activityLog.shift();
+}
 
 // SSE push: engine signals the browser tab when a mint is ready
 export const sseClients = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
@@ -88,6 +128,8 @@ const GRANTED_PATH = 'data/rst-granted.json';
 const WALLETS_PATH = 'data/rst-wallets.json';
 const MLDSA_PATH = 'data/rst-mldsa.json';
 const STAKED_PATH = 'data/rst-staked.json';
+const EARNED_REWARDS_PATH = 'data/rst-earned-rewards.json';
+const CLAIMED_PATH = 'data/rst-claimed.json';
 const encoder = new TextEncoder();
 
 function loadLeaderboard(): void {
@@ -122,6 +164,16 @@ function loadLeaderboard(): void {
             for (const [k, v] of Object.entries(data)) stakedRegistry.set(k, v as number);
             console.log('[RST] Staked registry loaded: ' + stakedRegistry.size + ' entries');
         }
+        if (fs.existsSync(EARNED_REWARDS_PATH)) {
+            const data = JSON.parse(fs.readFileSync(EARNED_REWARDS_PATH, 'utf-8'));
+            for (const [k, v] of Object.entries(data)) earnedRewardsRegistry.set(k, v as number);
+            console.log('[RST] Earned rewards loaded: ' + earnedRewardsRegistry.size + ' entries');
+        }
+        if (fs.existsSync(CLAIMED_PATH)) {
+            const data = JSON.parse(fs.readFileSync(CLAIMED_PATH, 'utf-8'));
+            for (const k of Object.keys(data)) claimedRegistry.add(k);
+            console.log('[RST] Claimed registry loaded: ' + claimedRegistry.size + ' entries');
+        }
     } catch {}
 }
 
@@ -129,6 +181,20 @@ export function saveStaked(): void {
     try {
         fs.mkdirSync(path.dirname(STAKED_PATH), { recursive: true });
         fs.writeFileSync(STAKED_PATH, JSON.stringify(Object.fromEntries(stakedRegistry)));
+    } catch {}
+}
+
+export function saveEarnedRewards(): void {
+    try {
+        fs.mkdirSync(path.dirname(EARNED_REWARDS_PATH), { recursive: true });
+        fs.writeFileSync(EARNED_REWARDS_PATH, JSON.stringify(Object.fromEntries(earnedRewardsRegistry)));
+    } catch {}
+}
+
+export function saveClaimed(): void {
+    try {
+        fs.mkdirSync(path.dirname(CLAIMED_PATH), { recursive: true });
+        fs.writeFileSync(CLAIMED_PATH, JSON.stringify(Object.fromEntries([...claimedRegistry].map(k => [k, true]))));
     } catch {}
 }
 
@@ -179,6 +245,7 @@ export function awardCowKillGP(username: string): void {
     pendingGP.set(username, prev + COW_KILL_GP);
     const prevTotal = totalGPConverted.get(username) ?? 0;
     totalGPConverted.set(username, prevTotal + COW_KILL_GP);
+    recordActivity(username, COW_KILL_GP);
     savePending();
     saveLeaderboard();
 }
@@ -259,7 +326,7 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
             player.hintTile(2, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, 0);
             setTutorialStep(player.username, 0);
         }
-        player.messageGame('Runescape Resource Terminal: Bring logs or ores to convert!');
+        player.messageGame('Runescape Resource Terminal: Bring logs, ores, fish, or bars to convert!');
         player.messageGame('1,000 GP = 1 RST  |  100 GP = 0.1 RST  |  10 GP = 0.01 RST');
         return true;
     }
@@ -270,6 +337,7 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     const prevTotal = totalGPConverted.get(player.username) ?? 0;
     totalGPConverted.set(player.username, prevTotal + saleGP);
     saveLeaderboard();
+    recordActivity(player.username, saleGP);
 
     // Accumulate pending GP
     const prevPending = pendingGP.get(player.username) ?? 0;
@@ -307,6 +375,14 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     }
 
     if (isMintConfigured()) {
+        // GP threshold check — first claim: 1,000 GP min; subsequent: 10,000 GP min
+        const hasClaimedBefore = claimedRegistry.has(player.username);
+        const gpThreshold = hasClaimedBefore ? SUBSEQUENT_CLAIM_GP_MIN : FIRST_CLAIM_GP_MIN;
+        if (newPending < gpThreshold) {
+            const needed = gpThreshold - newPending;
+            player.messageGame(`Keep earning! Need ${needed} more GP to claim RST (${newPending}/${gpThreshold} GP).`);
+            return true;
+        }
         // Cooldown check — don't fire grantClaim again if one is still likely unconfirmed
         const now = Date.now();
         const lastGrant = lastGrantTime.get(player.username) ?? 0;
@@ -349,9 +425,17 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                 saveGranted();
                 pendingGP.delete(player.username);
                 savePending();
-
+                // Mark as claimed — subsequent claims require 10,000 GP minimum
+                claimedRegistry.add(player.username);
+                saveClaimed();
                 // Accumulate 1% fee — flushed by 30-min interval, not here
                 pendingRewardGP += feeGP;
+                // Stamp on-chain Bank Log score at each conversion (event-driven, active players only).
+                // Score = totalLevel * 10 + rstEarned * 5 — captured at moment of conversion.
+                const totalLevel = player.baseLevels.reduce((sum: number, lv: number) => sum + lv, 0);
+                const totalGrantedGP = grantedGP.get(player.username) ?? 0;
+                const rstEarned = totalGrantedGP / RST_GP_PER_TOKEN;
+                stampBankLog(player.username, totalLevel, rstEarned);
             }
             // Whether grant succeeded or failed, push mint_ready so the player can claim from browser
             if (ctrl) {

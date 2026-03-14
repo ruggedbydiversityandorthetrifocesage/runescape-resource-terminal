@@ -10,6 +10,48 @@ import { handleDisclaimerPage, handleMapviewPage, handlePublicFiles } from './pa
 import { WebSocketData, handleWebSocketUpgrade, handleGatewayEndpointGet, websocketHandlers } from './websocket.js';
 import { db } from '#/db/query.js';
 
+// RST price cache (5-min TTL)
+let _rstPriceCache: { priceInSats: number; liquidityRST: number; liquiditySats: number; btcUSD: number; ts: number } | null = null;
+
+async function fetchRstPrice() {
+    if (_rstPriceCache && Date.now() - _rstPriceCache.ts < 5 * 60 * 1000) return _rstPriceCache;
+    try {
+        const NATIVE_SWAP = '0x4397befe4e067390596b3c296e77fe86589487bf3bf3f0a9a93ce794e2d78fb5';
+        const RST_PUBKEY = '8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+        const calldata = 'efec69cc' + RST_PUBKEY;
+        const [rpcRes, geckoRes] = await Promise.all([
+            fetch('https://testnet.opnet.org/api/v1/json-rpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params: [NATIVE_SWAP, calldata, null, null] }),
+            }),
+            fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd').catch(() => null),
+        ]);
+        const rpcJson = await rpcRes.json() as any;
+        const rpcResult = rpcJson?.result;
+        const raw: string = typeof rpcResult === 'string' ? rpcResult : (rpcResult?.result ?? '');
+        if (!raw) throw new Error('empty');
+        const buf = Buffer.from(raw, 'base64');
+        // layout: liquidity(32) + reservedLiquidity(32) + virtualBTCReserve(8) + virtualTokenReserve(32)
+        const liquidity = BigInt('0x' + buf.slice(0, 32).toString('hex'));
+        const virtualBTCReserve = BigInt('0x' + buf.slice(64, 72).toString('hex'));
+        const virtualTokenReserve = BigInt('0x' + buf.slice(72, 104).toString('hex'));
+        const liquidityRST = Math.round(Number(liquidity) / 1e18);
+        const priceInSats = virtualTokenReserve > 0n
+            ? Number(virtualBTCReserve) / (Number(virtualTokenReserve) / 1e18)
+            : 0;
+        let btcUSD = _rstPriceCache?.btcUSD ?? 0;
+        if (geckoRes?.ok) {
+            const g = await geckoRes.json() as any;
+            btcUSD = g?.bitcoin?.usd ?? btcUSD;
+        }
+        _rstPriceCache = { priceInSats: Math.round(priceInSats), liquidityRST, liquiditySats: Number(virtualBTCReserve), btcUSD, ts: Date.now() };
+        return _rstPriceCache;
+    } catch {
+        return _rstPriceCache ?? null;
+    }
+}
+
 export type { WebSocketData };
 
 export type WebSocketRoutes = {
@@ -227,10 +269,297 @@ function showStatus(msg, type) {
                 });
             }
 
-            // RST: Leaderboard
-            if (url.pathname === '/rst/leaderboard') {
+            // RST: Leaderboard — HTML page at /leaderboard, JSON at /rst/leaderboard-json
+            if (url.pathname === '/rst/leaderboard' || url.pathname === '/leaderboard') {
                 const { getLeaderboard } = await import('../engine/pill/PillMerchant.js');
+                if (req.headers.get('accept')?.includes('text/html') || url.pathname === '/leaderboard') {
+                    const entries = getLeaderboard();
+                    const rows = entries.length === 0
+                        ? '<tr><td colspan="3" style="text-align:center;color:#666;padding:20px;">No data yet — be the first to earn RST!</td></tr>'
+                        : entries.slice(0, 50).map((e, i) => {
+                            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i+1}`;
+                            const rst = (e.rst || e.gp / 1000).toFixed(2);
+                            const gp = (e.gp || 0).toLocaleString();
+                            return `<tr>
+                                <td style="padding:8px 12px;color:${i<3?'#f0c030':'#888'};font-weight:${i<3?'bold':'normal'};text-align:center;">${medal}</td>
+                                <td style="padding:8px 12px;"><a href="/rst/player/${encodeURIComponent(e.username)}" style="color:#c8c8b8;text-decoration:none;" onmouseover="this.style.color='#f0c030'" onmouseout="this.style.color='#c8c8b8'">${e.username}</a></td>
+                                <td style="padding:8px 12px;color:#f7931a;text-align:right;font-family:monospace;">${rst} RST</td>
+                                <td style="padding:8px 12px;color:#888;text-align:right;font-family:monospace;">${gp} GP</td>
+                            </tr>`;
+                        }).join('');
+                    const lbHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leaderboard — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:760px; margin:0 auto; padding:30px 16px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:32px; background:linear-gradient(180deg,#f0e080 0%,#c08010 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+.sub { color:#666; font-size:13px; margin-bottom:24px; }
+.box { border:1px solid #3a3000; background:#0e0c04; padding:0; overflow:hidden; }
+.box-title { background:linear-gradient(180deg,#2a2400,#1a1600); border-bottom:1px solid #2a2000; padding:12px 16px; color:#f0c030; font-weight:bold; font-size:14px; }
+table { width:100%; border-collapse:collapse; }
+tr { border-bottom:1px solid #111008; }
+tr:hover { background:#141008; }
+th { padding:8px 12px; text-align:left; color:#666; font-size:12px; font-weight:normal; border-bottom:1px solid #2a2000; background:#0e0c04; }
+.refresh { margin-top:12px; color:#555; font-size:12px; text-align:center; }
+.play-link { display:inline-block; margin-top:20px; background:linear-gradient(180deg,#5a1010,#3a0808); border:1px solid #8a2020; color:#f0c030; padding:10px 24px; text-decoration:none; font-weight:bold; font-size:14px; }
+.play-link:hover { background:linear-gradient(180deg,#7a2020,#5a1010); }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/rst/claim">Claim RST</a></nav>
+  <h1>&#x1F3C6; Leaderboard</h1>
+  <div class="sub">Top RST earners — all-time scores. Updated live.</div>
+  <div class="box">
+    <div class="box-title">Top Players by RST Earned</div>
+    <table>
+      <thead><tr><th style="width:60px;text-align:center;">Rank</th><th>Player</th><th style="text-align:right;">RST Earned</th><th style="text-align:right;">Total GP</th></tr></thead>
+      <tbody id="lbBody">${rows}</tbody>
+    </table>
+  </div>
+  <div class="refresh">Scores update in real-time as players earn and claim RST.</div>
+  <br>
+  <a class="play-link" href="/play">&#x2694;&#xFE0F; Play &amp; Earn RST</a>
+</div>
+</body>
+</html>`;
+                    return new Response(lbHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+                }
                 return new Response(JSON.stringify(getLeaderboard()), {
+                    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                });
+            }
+
+            // RST: Player stats page — reads directly from .sav file, no DB needed
+            const playerMatch = url.pathname.match(/^\/rst\/player\/([^/]+)\/?$/);
+            if (playerMatch) {
+                const username = decodeURIComponent(playerMatch[1]).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                const savPath = `data/players/main/${username}.sav`;
+                const { existsSync, readFileSync } = await import('fs');
+                if (!existsSync(savPath)) {
+                    return new Response(`Player "${username}" not found.`, { status: 404, headers: { 'Content-Type': 'text/html' } });
+                }
+
+                // Parse XP table — must match server formula exactly (Player.ts)
+                const levelXp = new Int32Array(99);
+                let acc = 0;
+                for (let i = 0; i < 99; i++) {
+                    const lv = i + 1;
+                    acc += Math.floor(lv + Math.pow(2.0, lv / 10.0) * 300.0);
+                    levelXp[i] = Math.floor(acc / 4) * 10;
+                }
+                function xpToLevel(xp: number): number {
+                    for (let i = 98; i >= 0; i--) if (xp >= levelXp[i]) return i + 2;
+                    return 1;
+                }
+                function fmtXp(x: number): string {
+                    return x.toLocaleString();
+                }
+
+                const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','—','—','Runecrafting'];
+                const SKILL_ICONS: Record<string, string> = {
+                    Attack:'⚔️', Defence:'🛡️', Strength:'💪', Hitpoints:'❤️', Ranged:'🏹', Prayer:'🙏',
+                    Magic:'🔮', Cooking:'🍳', Woodcutting:'🪓', Fletching:'🪶', Fishing:'🎣',
+                    Firemaking:'🔥', Crafting:'🧶', Smithing:'⚒️', Mining:'⛏️', Herblore:'🌿',
+                    Agility:'🤸', Thieving:'🗝️', Runecrafting:'🌀',
+                };
+
+                const data = readFileSync(savPath);
+                // Parse: [magic:2][version:2] then pos=4: [x:2][z:2][level:1][body:7][colors:5][gender:1][energy:2][playtime:4or2][skills:5×21]
+                const magic = (data[0] << 8) | data[1];
+                if (magic !== 0x2004 || data.length < 40) {
+                    return new Response(`Save file for "${username}" is invalid.`, { status: 500, headers: { 'Content-Type': 'text/html' } });
+                }
+                const version = (data[2] << 8) | data[3];
+                let pos = 4 + 2 + 2 + 1 + 7 + 5 + 1 + 2; // = 24
+                pos += version >= 2 ? 4 : 2; // playtime
+
+                const skills: { name: string; level: number; xp: number }[] = [];
+                let totalLevel = 0;
+                for (let i = 0; i < 21; i++) {
+                    if (pos + 5 > data.length - 4) break;
+                    const rawXp = ((data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3]) >>> 0;
+                    const storedLevel = data[pos + 4]; // level byte as stored in .sav
+                    pos += 5;
+                    const level = storedLevel > 0 ? Math.min(storedLevel, 99) : xpToLevel(rawXp);
+                    const xp = Math.round(rawXp / 10); // server stores XP * 10 internally
+                    const name = SKILL_NAMES[i];
+                    if (name === '—') continue;
+                    totalLevel += level;
+                    skills.push({ name, level, xp });
+                }
+
+                const { getLeaderboard } = await import('../engine/pill/PillMerchant.js');
+                const lb = getLeaderboard();
+                const lbEntry = lb.find(e => e.username.toLowerCase() === username);
+                const rst = lbEntry ? (lbEntry.rst || lbEntry.gp / 1000).toFixed(2) : '0.00';
+                const rank = lbEntry ? lb.indexOf(lbEntry) + 1 : null;
+
+                const rows = skills.map(s => `
+                  <tr>
+                    <td style="padding:7px 12px;color:#8ebc44;">${SKILL_ICONS[s.name] ?? ''} ${s.name}</td>
+                    <td style="padding:7px 12px;color:#f0c030;font-weight:bold;text-align:center;">${s.level}</td>
+                    <td style="padding:7px 12px;color:#888;text-align:right;font-family:monospace;">${fmtXp(s.xp)}</td>
+                  </tr>`).join('');
+
+                const playerHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${username} — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:560px; margin:0 auto; padding:30px 16px 60px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:28px; color:#f0c030; margin-bottom:4px; }
+.sub { color:#666; font-size:13px; margin-bottom:20px; }
+.meta { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+.meta-pill { background:#1a1200; border:1px solid #3a2800; padding:6px 14px; border-radius:3px; font-size:13px; color:#888; }
+.meta-pill span { color:#f0c030; font-weight:bold; }
+.box { border:1px solid #3a3000; background:#0e0c04; overflow:hidden; }
+.box-title { background:linear-gradient(180deg,#2a2400,#1a1600); border-bottom:1px solid #2a2000; padding:10px 14px; color:#f0c030; font-weight:bold; font-size:13px; }
+table { width:100%; border-collapse:collapse; }
+tr { border-bottom:1px solid #111008; }
+tr:hover { background:#141008; }
+th { padding:7px 12px; text-align:left; color:#555; font-size:11px; font-weight:normal; border-bottom:1px solid #2a2000; }
+.back { display:inline-block; margin-top:20px; color:#555; font-size:12px; text-decoration:none; }
+.back:hover { color:#8ebc44; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav><a href="/">&#8592; Home</a><a href="/leaderboard">Leaderboard</a></nav>
+  <h1>${username}</h1>
+  <div class="sub">Resource Terminal player stats</div>
+  <div class="meta">
+    <div class="meta-pill">Total Level: <span>${totalLevel}</span></div>
+    <div class="meta-pill">RST Earned: <span>${rst} RST</span></div>
+    ${rank ? `<div class="meta-pill">Rank: <span>#${rank}</span></div>` : ''}
+  </div>
+  <div class="box">
+    <div class="box-title">&#x1F4CA; Skills</div>
+    <table>
+      <thead><tr><th>Skill</th><th style="text-align:center;">Level</th><th style="text-align:right;">XP</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+  <a class="back" href="/leaderboard">&#8592; Back to Leaderboard</a>
+</div>
+</body></html>`;
+                return new Response(playerHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            // RST: Server analytics stats
+            if (url.pathname === '/rst/server-stats') {
+                const { walletRegistry, getLeaderboard } = await import('../engine/pill/PillMerchant.js');
+                return new Response(JSON.stringify({
+                    online: Array.from(World.players).length,
+                    wallets: walletRegistry.size,
+                    leaderboard: getLeaderboard().length
+                }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+            }
+
+            // RST: Activity analytics — top earners per 1h/6h/24h
+            if (url.pathname === '/rst/activity') {
+                const { activityLog } = await import('../engine/pill/PillMerchant.js');
+                const now = Date.now();
+                const windows: [string, number][] = [['1h', 3600000], ['6h', 21600000], ['24h', 86400000]];
+                const result: Record<string, unknown> = {};
+                for (const [label, ms] of windows) {
+                    const cutoff = now - ms;
+                    const events = activityLog.filter(e => e.timestamp >= cutoff);
+                    const byUser = new Map<string, number>();
+                    let totalGP = 0;
+                    for (const e of events) {
+                        byUser.set(e.username, (byUser.get(e.username) ?? 0) + e.gp);
+                        totalGP += e.gp;
+                    }
+                    const top = Array.from(byUser.entries())
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([username, gp]) => ({ username, gp, rst: +(gp / 1000).toFixed(3) }));
+                    result[label] = { top, totalGP, totalRST: +(totalGP / 1000).toFixed(3), players: byUser.size };
+                }
+                return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+            }
+
+            // RST: Live price from NativeSwap LP
+            if (url.pathname === '/rst/price') {
+                const data = await fetchRstPrice();
+                return new Response(JSON.stringify(data ?? { error: 'unavailable' }), {
+                    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                });
+            }
+
+            // RST: NFT metadata — serves OpenSea-compatible JSON for BankLog OP721
+            const nftMatch = url.pathname.match(/^\/rst\/nft\/(\d+)\/?$/);
+            if (nftMatch) {
+                const tokenId = parseInt(nftMatch[1], 10);
+                const { getBankLogEntry } = await import('../engine/pill/BankLogMinter.js');
+                const entry = getBankLogEntry(tokenId);
+                if (!entry) {
+                    return new Response(JSON.stringify({ error: 'Token not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+                }
+                const { username } = entry;
+
+                // Parse .sav for live stats
+                const savPath = `data/players/main/${username}.sav`;
+                const { existsSync, readFileSync } = await import('fs');
+                let totalLevel = 0;
+                const skillAttrs: { trait_type: string; value: number }[] = [];
+                if (existsSync(savPath)) {
+                    const data = readFileSync(savPath);
+                    const magic = (data[0] << 8) | data[1];
+                    if (magic === 0x2004 && data.length >= 40) {
+                        const version = (data[2] << 8) | data[3];
+                        let pos = 24 + (version >= 2 ? 4 : 2);
+                        const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','—','—','Runecrafting'];
+                        for (let i = 0; i < 21; i++) {
+                            if (pos + 5 > data.length - 4) break;
+                            const storedLevel = data[pos + 4];
+                            pos += 5;
+                            const name = SKILL_NAMES[i];
+                            if (name === '—') continue;
+                            const level = Math.min(storedLevel, 99);
+                            totalLevel += level;
+                            skillAttrs.push({ trait_type: name, value: level });
+                        }
+                    }
+                }
+
+                // Pull RST earned from leaderboard
+                const { getLeaderboard } = await import('../engine/pill/PillMerchant.js');
+                const lb = getLeaderboard();
+                const lbEntry = lb.find((e: any) => e.username.toLowerCase() === username);
+                const rstEarned = lbEntry ? +(lbEntry.rst || lbEntry.gp / 1000).toFixed(2) : 0;
+                const rank = lbEntry ? lb.indexOf(lbEntry) + 1 : null;
+                const score = totalLevel * 10 + Math.floor(rstEarned * 5);
+
+                const metadata = {
+                    name: `${username}'s Bank Log`,
+                    description: `Verified in-game identity on Bitcoin L1. Total Level: ${totalLevel}. RST Earned: ${rstEarned}. Score: ${score}.`,
+                    image: `https://runescaperesourceterminal.duckdns.org/favicon.ico`,
+                    external_url: `https://runescaperesourceterminal.duckdns.org/rst/player/${encodeURIComponent(username)}`,
+                    attributes: [
+                        { trait_type: 'Total Level', value: totalLevel },
+                        { trait_type: 'RST Earned', value: rstEarned },
+                        { trait_type: 'Score', value: score },
+                        ...(rank ? [{ trait_type: 'Leaderboard Rank', value: rank }] : []),
+                        ...skillAttrs,
+                    ],
+                };
+                return new Response(JSON.stringify(metadata, null, 2), {
                     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
                 });
             }
@@ -279,12 +608,13 @@ function showStatus(msg, type) {
 
             if (url.pathname === '/rst/balance') {
                 const username = url.searchParams.get('username')?.toLowerCase() ?? '';
-                const { pendingGP, grantedGP, totalGPConverted, walletRegistry } = await import('../engine/pill/PillMerchant.js');
+                const { pendingGP, grantedGP, totalGPConverted, walletRegistry, claimedRegistry } = await import('../engine/pill/PillMerchant.js');
                 const pending = pendingGP.get(username) ?? 0;
                 const granted = grantedGP.get(username) ?? 0;
                 const totalGP = totalGPConverted.get(username) ?? 0;
                 const wallet = walletRegistry.get(username) ?? null;
-                return new Response(JSON.stringify({ username, pending, granted, totalGP, rstPending: pending / 1000, rstGranted: granted / 1000, wallet }), {
+                const hasClaimedBefore = claimedRegistry.has(username);
+                return new Response(JSON.stringify({ username, pending, granted, totalGP, rstPending: pending / 1000, rstGranted: granted / 1000, wallet, hasClaimedBefore }), {
                     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
                 });
             }
@@ -353,6 +683,31 @@ function showStatus(msg, type) {
                 });
             }
 
+            // RST: Earned staking rewards — persistent cross-device tracking
+            if (url.pathname === '/rst/earned-rewards') {
+                if (req.method === 'GET') {
+                    const w = url.searchParams.get('wallet') ?? '';
+                    const { earnedRewardsRegistry } = await import('../engine/pill/PillMerchant.js');
+                    const earned = earnedRewardsRegistry.get(w) ?? 0;
+                    return new Response(JSON.stringify({ earned }), {
+                        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                    });
+                }
+                if (req.method === 'POST') {
+                    const body = await req.json() as any;
+                    const w = body.wallet ?? '';
+                    const amount = parseFloat(body.amount) || 0;
+                    if (!w || amount <= 0) return new Response(JSON.stringify({ error: 'Invalid' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+                    const { earnedRewardsRegistry, saveEarnedRewards } = await import('../engine/pill/PillMerchant.js');
+                    const prev = earnedRewardsRegistry.get(w) ?? 0;
+                    earnedRewardsRegistry.set(w, prev + amount);
+                    saveEarnedRewards();
+                    return new Response(JSON.stringify({ success: true, total: prev + amount }), {
+                        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+                    });
+                }
+            }
+
             // RST Shop: Confirm purchase — validate nonce, deduct RST, give item in-game
             if (url.pathname === '/shop/confirm-purchase' && req.method === 'POST') {
                 try {
@@ -374,7 +729,7 @@ function showStatus(msg, type) {
                     const result = confirmRSTShopPurchase(username.toLowerCase(), nonce, World.currentTick);
                     if (result.success && result.itemId != null) {
                         const InvTypeMod = (await import('#/cache/config/InvType.js')).default;
-                        player.invAdd(InvTypeMod.INV, result.itemId, 1, false);
+                        player.invAdd(InvTypeMod.INV, result.itemId, result.itemQty ?? 1, false);
                         player.messageGame(result.message!);
                         console.log('[RST Shop] ' + username + ' received ' + result.itemName + ' for ' + result.itemId);
                     }
@@ -417,12 +772,1225 @@ function showStatus(msg, type) {
                         }
                         const pending = pendingGP.get(username.toLowerCase()) ?? 0;
                         console.log('[RST] Wallet registered: ' + username + ' -> ' + wallet + (pending > 0 ? ' (' + pending + ' GP pending)' : ''));
+
+                        // Auto-mint Bank Log NFT on first wallet connect
+                        if (mldsaKey) {
+                            const { mintBankLog } = await import('../engine/pill/BankLogMinter.js');
+                            mintBankLog(username, mldsaKey).catch((e: unknown) => console.error('[BankLog] auto-mint error:', e));
+                        }
+
                         return new Response(JSON.stringify({ success: true, username, wallet, pendingGP: pending, hasMldsa: !!mldsaKey }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
                     } catch (e: any) {
                         console.error('[RST] register-wallet error:', e.message);
                         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
                     }
                 }
+            }
+
+            // Roadmap page
+            // News article pages
+            if (url.pathname === '/news/world-gating') {
+                return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>World Gating + Difficulty System — Resource Terminal</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a00;color:#c0a060;font-family:'Courier New',monospace;min-height:100vh}nav{background:#1a1200;border-bottom:2px solid #4a3800;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap}nav a{color:#8ebc44;text-decoration:none;font-size:0.85em}nav a:hover{color:#f0c030}.container{max-width:800px;margin:0 auto;padding:40px 24px}.tag{display:inline-block;background:#0a2000;border:1px solid #3a6000;color:#8ebc44;font-size:0.72em;padding:3px 10px;border-radius:3px;margin-bottom:16px}.headline{color:#f0c030;font-size:2em;font-weight:bold;margin-bottom:8px;line-height:1.2}.dateline{color:#666;font-size:0.8em;margin-bottom:28px;border-bottom:1px solid #2a2000;padding-bottom:16px}.body p{color:#aaa;line-height:1.8;margin-bottom:16px;font-size:0.95em}.body h3{color:#f0c030;font-size:1.1em;margin:24px 0 10px}.body ul{color:#aaa;line-height:1.8;padding-left:20px;margin-bottom:16px}.body ul li{margin-bottom:6px}.cta{display:inline-block;margin-top:28px;background:#f7931a;color:#000;padding:10px 24px;font-family:monospace;font-weight:bold;text-decoration:none;border-radius:3px}.cta:hover{background:#e07800}</style>
+</head>
+<body>
+<nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/difficulty">Difficulty</a><a href="/roadmap">Roadmap</a></nav>
+<div class="container">
+  <span class="tag">UPDATE &mdash; Mar-2026</span>
+  <div class="headline">World Gating + Difficulty System Live</div>
+  <div class="dateline">March 2026 &mdash; Resource Terminal</div>
+  <div class="body">
+    <p>The World Gating system is now live on Resource Terminal. Your RST balance directly determines which zones of the world you can access, creating a meaningful progression loop tied to on-chain token ownership.</p>
+    <h3>How It Works</h3>
+    <ul>
+      <li><strong style="color:#ff4444">Tier 0 — EXTREMELY HARDCORE</strong>: 0–9 RST. Misthalin only. Cut trees, sell logs, survive.</li>
+      <li><strong style="color:#f7931a">Tier 1 — HARD MODE</strong>: 10–999 RST. Asgarnia, Falador, Port Sarim, Wilderness unlocked.</li>
+      <li><strong style="color:#44cc44">Tier 2 — NORMAL</strong>: 1,000+ RST. Full world access. All content available.</li>
+    </ul>
+    <h3>Difficulty Index</h3>
+    <p>Your current difficulty tier is displayed in the sidebar after connecting your OP_WALLET. The server checks your RST balance every 60 seconds and updates your access accordingly.</p>
+    <h3>Why This Matters</h3>
+    <p>World gating makes RST ownership meaningful beyond speculation. Holding RST literally changes what you can do in the game. It creates a natural on-ramp: new players start in Misthalin, earn RST by chopping and selling, then unlock more of the world as they accumulate tokens.</p>
+    <a class="cta" href="/play">&#x2694;&#xFE0F; Start Playing</a>
+  </div>
+</div>
+</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            if (url.pathname === '/news/rst-staking') {
+                return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>$RST Staking (sRST) Deployed — Resource Terminal</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a00;color:#c0a060;font-family:'Courier New',monospace;min-height:100vh}nav{background:#1a1200;border-bottom:2px solid #4a3800;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap}nav a{color:#8ebc44;text-decoration:none;font-size:0.85em}nav a:hover{color:#f0c030}.container{max-width:800px;margin:0 auto;padding:40px 24px}.tag{display:inline-block;background:#0a2000;border:1px solid #3a6000;color:#8ebc44;font-size:0.72em;padding:3px 10px;border-radius:3px;margin-bottom:16px}.headline{color:#f0c030;font-size:2em;font-weight:bold;margin-bottom:8px;line-height:1.2}.dateline{color:#666;font-size:0.8em;margin-bottom:28px;border-bottom:1px solid #2a2000;padding-bottom:16px}.body p{color:#aaa;line-height:1.8;margin-bottom:16px;font-size:0.95em}.body h3{color:#f0c030;font-size:1.1em;margin:24px 0 10px}.body ul{color:#aaa;line-height:1.8;padding-left:20px;margin-bottom:16px}.body ul li{margin-bottom:6px}.tier-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #2a2000;border-radius:4px;margin-bottom:8px;background:#0e0e00}.tier-name{color:#f0c030;font-weight:bold;min-width:120px}.tier-detail{color:#888;font-size:0.88em}.cta{display:inline-block;margin-top:28px;background:#f7931a;color:#000;padding:10px 24px;font-family:monospace;font-weight:bold;text-decoration:none;border-radius:3px}.cta:hover{background:#e07800}</style>
+</head>
+<body>
+<nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/tokenomics">Tokenomics</a><a href="/roadmap">Roadmap</a></nav>
+<div class="container">
+  <span class="tag">UPDATE &mdash; Mar-2026</span>
+  <div class="headline">$RST Staking (sRST) Deployed</div>
+  <div class="dateline">March 2026 &mdash; Resource Terminal</div>
+  <div class="body">
+    <p>The RST MasterChef staking contract (V2) is now live on Bitcoin mainnet via OPNet. Players can stake their RST tokens to earn sRST rewards, with four lockup tiers offering different multipliers and early-exit penalties.</p>
+    <h3>Staking Tiers</h3>
+    <div class="tier-row"><span class="tier-name">Flexible</span><span class="tier-detail">1&times; multiplier &mdash; No lockup &mdash; 20% early exit penalty</span></div>
+    <div class="tier-row"><span class="tier-name">30-Day</span><span class="tier-detail">5&times; multiplier &mdash; 4,320 block lockup &mdash; 10% early exit penalty</span></div>
+    <div class="tier-row"><span class="tier-name">90-Day</span><span class="tier-detail">4&times; multiplier &mdash; 12,960 block lockup &mdash; 1% early exit penalty</span></div>
+    <div class="tier-row"><span class="tier-name">180-Day</span><span class="tier-detail">2.5&times; multiplier &mdash; 25,920 block lockup &mdash; 0% early exit penalty</span></div>
+    <h3>How to Stake</h3>
+    <p>Connect your OP_WALLET in the sidebar on the play page. Once connected, the staking panel appears automatically. Select a tier, enter an amount, and sign the transaction. Rewards accumulate on every block and can be claimed at any time.</p>
+    <h3>Contract</h3>
+    <p>The sRST staking contract is deployed on OPNet Bitcoin mainnet. All staking logic is on-chain — no custodians, no servers holding your tokens.</p>
+    <a class="cta" href="/play">&#x20BF; Stake RST Now</a>
+  </div>
+</div>
+</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            if (url.pathname === '/news/rst-v8') {
+                return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RST v8 — Full End-to-End Claim Working — Resource Terminal</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a00;color:#c0a060;font-family:'Courier New',monospace;min-height:100vh}nav{background:#1a1200;border-bottom:2px solid #4a3800;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap}nav a{color:#8ebc44;text-decoration:none;font-size:0.85em}nav a:hover{color:#f0c030}.container{max-width:800px;margin:0 auto;padding:40px 24px}.tag{display:inline-block;background:#0a2000;border:1px solid #3a6000;color:#8ebc44;font-size:0.72em;padding:3px 10px;border-radius:3px;margin-bottom:16px}.headline{color:#f0c030;font-size:2em;font-weight:bold;margin-bottom:8px;line-height:1.2}.dateline{color:#666;font-size:0.8em;margin-bottom:28px;border-bottom:1px solid #2a2000;padding-bottom:16px}.body p{color:#aaa;line-height:1.8;margin-bottom:16px;font-size:0.95em}.body h3{color:#f0c030;font-size:1.1em;margin:24px 0 10px}.body ul{color:#aaa;line-height:1.8;padding-left:20px;margin-bottom:16px}.body ul li{margin-bottom:6px}.flow-step{display:flex;align-items:flex-start;gap:14px;padding:10px 0;border-bottom:1px solid #1a1200}.flow-num{color:#f7931a;font-weight:bold;font-size:1.1em;min-width:24px}.flow-text{color:#aaa;font-size:0.9em;line-height:1.6}.cta{display:inline-block;margin-top:28px;background:#f7931a;color:#000;padding:10px 24px;font-family:monospace;font-weight:bold;text-decoration:none;border-radius:3px}.cta:hover{background:#e07800}</style>
+</head>
+<body>
+<nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/tokenomics">Tokenomics</a><a href="/roadmap">Roadmap</a></nav>
+<div class="container">
+  <span class="tag">MILESTONE &mdash; Mar-2026</span>
+  <div class="headline">RST v8 — Full End-to-End Claim Working</div>
+  <div class="dateline">March 2026 &mdash; Resource Terminal</div>
+  <div class="body">
+    <p>RST v8 marks the first fully working end-to-end flow for earning and claiming RST tokens — from chopping a tree in-game to holding RST in your OP_WALLET on Bitcoin mainnet.</p>
+    <h3>The Full Flow</h3>
+    <div class="flow-step"><span class="flow-num">1</span><span class="flow-text">Connect OP_WALLET and register your username in the sidebar</span></div>
+    <div class="flow-step"><span class="flow-num">2</span><span class="flow-text">Chop trees and sell logs to Bob the Resource Broker in-game for GP</span></div>
+    <div class="flow-step"><span class="flow-num">3</span><span class="flow-text">GP accumulates server-side and automatically converts to RST via grantClaim on Bitcoin</span></div>
+    <div class="flow-step"><span class="flow-num">4</span><span class="flow-text">The sidebar updates showing your pending RST. Click CLAIM RST and sign with OP_WALLET</span></div>
+    <div class="flow-step"><span class="flow-num">5</span><span class="flow-text">RST lands in your OP_WALLET. Fully on-chain, fully yours.</span></div>
+    <h3>What Makes v8 Special</h3>
+    <p>Previous versions had issues with MLDSA key registration, sender identity resolution, and transaction signing. v8 resolves all of these. The server correctly identifies the player's on-chain identity, grantClaim executes without reverting, and the browser wallet signs and broadcasts in one step.</p>
+    <a class="cta" href="/play">&#x2694;&#xFE0F; Play &amp; Earn RST</a>
+  </div>
+</div>
+</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            if (url.pathname === '/news/motoswap-lp') {
+                return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MotoSwap LP Created — Resource Terminal</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a00;color:#c0a060;font-family:'Courier New',monospace;min-height:100vh}nav{background:#1a1200;border-bottom:2px solid #4a3800;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap}nav a{color:#8ebc44;text-decoration:none;font-size:0.85em}nav a:hover{color:#f0c030}.container{max-width:800px;margin:0 auto;padding:40px 24px}.tag{display:inline-block;background:#0a2000;border:1px solid #3a6000;color:#8ebc44;font-size:0.72em;padding:3px 10px;border-radius:3px;margin-bottom:16px}.headline{color:#f0c030;font-size:2em;font-weight:bold;margin-bottom:8px;line-height:1.2}.dateline{color:#666;font-size:0.8em;margin-bottom:28px;border-bottom:1px solid #2a2000;padding-bottom:16px}.body p{color:#aaa;line-height:1.8;margin-bottom:16px;font-size:0.95em}.body h3{color:#f0c030;font-size:1.1em;margin:24px 0 10px}.stat-box{background:#0e0e00;border:1px solid #2a2000;border-radius:4px;padding:14px 18px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}.stat-label{color:#888;font-size:0.85em}.stat-val{color:#f0c030;font-weight:bold}.cta{display:inline-block;margin-top:28px;background:#f7931a;color:#000;padding:10px 24px;font-family:monospace;font-weight:bold;text-decoration:none;border-radius:3px}.cta:hover{background:#e07800}</style>
+</head>
+<body>
+<nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/tokenomics">Tokenomics</a><a href="/roadmap">Roadmap</a></nav>
+<div class="container">
+  <span class="tag">MILESTONE &mdash; Mar-2026</span>
+  <div class="headline">MotoSwap LP Created</div>
+  <div class="dateline">March 2026 &mdash; Resource Terminal</div>
+  <div class="body">
+    <p>The RST/BTC liquidity pool is now live on MotoSwap — OPNet's native DEX on Bitcoin. This makes RST tradeable on-chain for the first time, with real BTC as the pair asset.</p>
+    <h3>LP Details</h3>
+    <div class="stat-box"><span class="stat-label">DEX</span><span class="stat-val">MotoSwap (NativeSwap)</span></div>
+    <div class="stat-box"><span class="stat-label">Pair</span><span class="stat-val">RST / BTC</span></div>
+    <div class="stat-box"><span class="stat-label">Initial Supply to LP</span><span class="stat-val">500,000 RST</span></div>
+    <div class="stat-box"><span class="stat-label">1% LP Burn</span><span class="stat-val">Active after setLPPair</span></div>
+    <h3>What This Means</h3>
+    <p>RST earned in-game can now be swapped for BTC directly on MotoSwap. The 1% transaction fee on LP trades is partially burned, creating deflationary pressure as trading volume grows. The remaining 500,000 RST (of the 1M total supply) is reserved for player claims via the grantClaim mechanism.</p>
+    <h3>Trade RST</h3>
+    <p>Visit MotoSwap at <a href="https://motoswap.org" target="_blank" style="color:#8ebc44">motoswap.org</a> and search for the RST contract to trade.</p>
+    <a class="cta" href="/play">&#x2694;&#xFE0F; Earn RST to Trade</a>
+  </div>
+</div>
+</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            if (url.pathname === '/news/alpha-launch') {
+                return new Response(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resource Terminal Alpha Launch — Resource Terminal</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a00;color:#c0a060;font-family:'Courier New',monospace;min-height:100vh}nav{background:#1a1200;border-bottom:2px solid #4a3800;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap}nav a{color:#8ebc44;text-decoration:none;font-size:0.85em}nav a:hover{color:#f0c030}.container{max-width:800px;margin:0 auto;padding:40px 24px}.tag{display:inline-block;background:#0a2000;border:1px solid #3a6000;color:#8ebc44;font-size:0.72em;padding:3px 10px;border-radius:3px;margin-bottom:16px}.headline{color:#f0c030;font-size:2em;font-weight:bold;margin-bottom:8px;line-height:1.2}.dateline{color:#666;font-size:0.8em;margin-bottom:28px;border-bottom:1px solid #2a2000;padding-bottom:16px}.body p{color:#aaa;line-height:1.8;margin-bottom:16px;font-size:0.95em}.body h3{color:#f0c030;font-size:1.1em;margin:24px 0 10px}.body ul{color:#aaa;line-height:1.8;padding-left:20px;margin-bottom:16px}.body ul li{margin-bottom:6px}.highlight{background:#0a2000;border-left:3px solid #f7931a;padding:12px 16px;margin:20px 0;color:#c0a060;font-size:0.9em;line-height:1.7}.cta{display:inline-block;margin-top:28px;background:#f7931a;color:#000;padding:10px 24px;font-family:monospace;font-weight:bold;text-decoration:none;border-radius:3px}.cta:hover{background:#e07800}</style>
+</head>
+<body>
+<nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/roadmap">Roadmap</a><a href="/tokenomics">Tokenomics</a></nav>
+<div class="container">
+  <span class="tag">LAUNCH &mdash; Feb-2026</span>
+  <div class="headline">Resource Terminal Alpha Launch</div>
+  <div class="dateline">February 2026 &mdash; Resource Terminal</div>
+  <div class="body">
+    <div class="highlight">The first Bitcoin-native play-to-earn RuneScape server is live. Chop trees. Sell resources. Earn real BTC-backed tokens.</div>
+    <p>Resource Terminal launched in alpha in February 2026 — the first RuneScape-style MMO where in-game actions earn real on-chain tokens on Bitcoin via OPNet.</p>
+    <h3>What Launched</h3>
+    <ul>
+      <li>Fully playable 2004-era RuneScape server (browser-based, no download)</li>
+      <li>RST token contract deployed on OPNet Bitcoin mainnet</li>
+      <li>Bob the Resource Broker — sell logs and resources for GP that converts to RST</li>
+      <li>OP_WALLET integration for connecting Bitcoin identity to game account</li>
+      <li>Real-time SSE-based RST claim flow</li>
+    </ul>
+    <h3>The Vision</h3>
+    <p>Resource Terminal is an experiment in on-chain game economies. Every log chopped, every resource sold, every token earned is recorded on Bitcoin. The game is the interface. Bitcoin is the backend.</p>
+    <h3>Alpha Status</h3>
+    <p>The alpha is intentionally limited. Content is gated by RST balance. New zones, skills, and mechanics unlock as the ecosystem grows. This is the beginning — not the final form.</p>
+    <a class="cta" href="/play">&#x2694;&#xFE0F; Join the Alpha</a>
+  </div>
+</div>
+</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            if (url.pathname === '/roadmap') {
+                const roadmapHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roadmap — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:760px; margin:0 auto; padding:30px 16px 60px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:36px; background:linear-gradient(180deg,#f0e080 0%,#c08010 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+.sub { color:#888; font-size:14px; margin-bottom:28px; }
+.phase { border:1px solid #3a3000; background:#0e0c04; margin-bottom:18px; overflow:hidden; }
+.phase-header { padding:12px 16px; font-weight:bold; font-size:15px; display:flex; align-items:center; gap:10px; }
+.phase-header.done { background:linear-gradient(90deg,#0a1f0a,#0e0c04); border-bottom:1px solid #1a3a1a; color:#44cc44; }
+.phase-header.next { background:linear-gradient(90deg,#1a1400,#0e0c04); border-bottom:1px solid #3a2800; color:#f7931a; }
+.phase-header.planned { background:linear-gradient(90deg,#141420,#0e0c04); border-bottom:1px solid #2a2a40; color:#8888ff; }
+.phase-header.tbd { background:linear-gradient(90deg,#1a1420,#0e0c04); border-bottom:1px solid #3a2a40; color:#cc88ff; }
+.phase-header.final { background:linear-gradient(90deg,#1a1000,#0e0c04); border-bottom:1px solid #4a3000; color:#f0c030; }
+.phase-body { padding:14px 16px; }
+.phase-body ul { list-style:none; padding:0; }
+.phase-body ul li { padding:5px 0; font-size:14px; line-height:1.5; color:#c8c8b8; }
+.phase-body ul li::before { content:""; margin-right:6px; }
+.phase-body p { font-size:14px; color:#aaa; line-height:1.7; margin-bottom:8px; }
+.badge-done { color:#44cc44; }
+.badge-soon { color:#f7931a; }
+.badge-plan { color:#8888ff; }
+.mainnet { text-align:center; padding:20px; }
+.mainnet h3 { color:#f0c030; font-size:18px; margin-bottom:8px; }
+.mainnet p { color:#888; font-size:13px; line-height:1.7; }
+.cta { display:inline-block; margin-top:24px; background:linear-gradient(180deg,#5a1010,#3a0808); border:1px solid #8a2020; color:#f0c030; padding:10px 24px; text-decoration:none; font-weight:bold; }
+.cta:hover { background:linear-gradient(180deg,#7a2020,#5a1010); }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/tokenomics">Tokenomics</a><a href="/difficulty">Difficulty</a></nav>
+  <h1>&#x1F5FA; Roadmap</h1>
+  <div class="sub">From Testnet to Mainnet &mdash; the path ahead</div>
+
+  <div class="phase">
+    <div class="phase-header done">&#x2705; V1 &mdash; FOUNDATION <span style="font-size:12px;font-weight:normal;color:#44aa44;">(Live)</span></div>
+    <div class="phase-body">
+      <ul>
+        <li><span class="badge-done">&#x2705;</span> OP20 Contract deployed on BTC L1 (Testnet)</li>
+        <li><span class="badge-done">&#x2705;</span> Basic earn &amp; claim system (chop trees &#x2192; sell &#x2192; claim RST)</li>
+        <li><span class="badge-done">&#x2705;</span> LP pool available on MotoSwap &mdash; RST tradeable</li>
+        <li><span class="badge-done">&#x2705;</span> 1% swap burn on every trade</li>
+        <li><span class="badge-done">&#x2705;</span> Difficulty system &mdash; unlock world by earning RST</li>
+        <li><span class="badge-done">&#x2705;</span> OG Rank airdrop tracking for V1 LP traders</li>
+        <li><span class="badge-done">&#x2705;</span> sRST staking contract &mdash; stake RST, earn rewards</li>
+        <li><span class="badge-done">&#x2705;</span> Stake 10+ RST &#x2192; instantly unlock Hard Mode (skip the grind)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header next">&#x1F504; V2 &mdash; STAKING &amp; REWARDS <span style="font-size:12px;font-weight:normal;color:#cc7700;">(Upcoming)</span></div>
+    <div class="phase-body">
+      <ul>
+        <li><span class="badge-soon">&#x1F539;</span> 1% swap fee now split 3 ways: LP providers, Deployer, sRST stakers</li>
+        <li><span class="badge-soon">&#x1F539;</span> sRST burn/convert mechanism &mdash; grow the staking reward pool</li>
+        <li><span class="badge-soon">&#x1F539;</span> Blacklist mechanism</li>
+        <li><span class="badge-soon">&#x1F539;</span> Fishing &amp; Cooking now unlocked! Catch raw fish and sell them to the general store (or cook them for double &mdash; careful, don&apos;t burn ALL your food ;)</li>
+        <li><span class="badge-soon">&#x1F539;</span> Veteran Rank awarded to V2 participants</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header planned">&#x1F6A7; V3 &mdash; EXPANDED ECONOMY <span style="font-size:12px;font-weight:normal;color:#6666cc;">(Planned)</span></div>
+    <div class="phase-body">
+      <ul>
+        <li><span class="badge-plan">&#x1F537;</span> Smelting bars, Creating Runes (Runecrafting) and making potions &mdash; all tradeable for RST</li>
+        <li><span class="badge-plan">&#x1F537;</span> Farming &amp; Yield Farming</li>
+        <li><span class="badge-plan">&#x1F537;</span> Bob &amp; Satoshi live AI in-game chatbot</li>
+        <li><span class="badge-plan">&#x1F537;</span> Deeper crafting &#x2192; on-chain item economy &amp; the introduction of the bank value system (mint your progress to chain)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header tbd">&#x1F4BC; V4 &mdash; TBD <span style="font-size:12px;font-weight:normal;color:#aa66dd;">(Master Rank)</span></div>
+    <div class="phase-body">
+      <p>Scope depends on community growth and roadmap progress. Master Rank holders shape the direction.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header final">&#x1F3C6; MAINNET LAUNCH &mdash; THE FINAL MILESTONE</div>
+    <div class="mainnet">
+      <h3>Real Bitcoin. Real RST.</h3>
+      <p>All ranks carried over. OG / Veteran / Officer / Master wallets recognised at launch.</p>
+      <p style="margin-top:8px;">The grind you do on Testnet counts. <strong style="color:#f0c030;">Your wallet history is your reputation.</strong></p>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:8px;">
+    <a class="cta" href="/play">&#x2694;&#xFE0F; Start Earning RST Now</a>
+  </div>
+</div>
+</body>
+</html>`;
+                return new Response(roadmapHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            // Tokenomics page
+            if (url.pathname === '/tokenomics') {
+                const tokenomicsHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tokenomics — $RST — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:760px; margin:0 auto; padding:30px 16px 60px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:36px; background:linear-gradient(180deg,#f0e080 0%,#c08010 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+.sub { color:#888; font-size:14px; margin-bottom:28px; }
+.box { border:1px solid #3a3000; background:#0e0c04; margin-bottom:18px; overflow:hidden; }
+.box-title { padding:12px 16px; font-weight:bold; font-size:14px; background:linear-gradient(90deg,#2a1800,#0e0c04); border-bottom:1px solid #3a2000; color:#f7931a; }
+.box-body { padding:16px; }
+.box-body p { font-size:14px; line-height:1.7; color:#c8c8b8; margin-bottom:10px; }
+.box-body ul { list-style:none; padding:0; }
+.box-body ul li { padding:5px 0; font-size:14px; line-height:1.5; color:#c8c8b8; }
+.supply-bar { background:#1a1600; border:1px solid #2a2000; border-radius:4px; overflow:hidden; height:28px; margin:12px 0; display:flex; }
+.supply-lp { background:linear-gradient(90deg,#5a3000,#3a1800); height:100%; width:50%; display:flex; align-items:center; justify-content:center; font-size:12px; color:#f7931a; font-weight:bold; }
+.supply-play { background:linear-gradient(90deg,#0a3a0a,#061806); height:100%; width:50%; display:flex; align-items:center; justify-content:center; font-size:12px; color:#44cc44; font-weight:bold; }
+.contract-addr { font-family:monospace; font-size:11px; color:#888; background:#080808; border:1px solid #2a2000; padding:8px 10px; margin-top:8px; word-break:break-all; }
+.contract-addr span { color:#f7931a; }
+.rank-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:4px; }
+.rank-card { background:#080808; border:1px solid #2a2000; padding:10px; text-align:center; }
+.rank-icon { font-size:24px; display:block; margin-bottom:4px; }
+.rank-name { color:#f0c030; font-weight:bold; font-size:13px; }
+.rank-desc { color:#666; font-size:11px; margin-top:3px; }
+.step { display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-bottom:1px solid #111008; }
+.step:last-child { border-bottom:none; }
+.step-num { background:#3a2000; color:#f7931a; font-weight:bold; font-size:13px; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; }
+.step-text { font-size:14px; line-height:1.5; color:#c8c8b8; }
+.cta { display:inline-block; margin-top:20px; background:linear-gradient(180deg,#102010,#081008); border:1px solid #208020; color:#44cc44; padding:10px 24px; text-decoration:none; font-weight:bold; }
+.cta:hover { background:linear-gradient(180deg,#204020,#102010); }
+.cta-orange { background:linear-gradient(180deg,#5a1010,#3a0808); border-color:#8a2020; color:#f0c030; }
+.cta-orange:hover { background:linear-gradient(180deg,#7a2020,#5a1010); }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/roadmap">Roadmap</a><a href="/difficulty">Difficulty</a></nav>
+  <h1>&#x20BF; Tokenomics</h1>
+  <div class="sub">RST &mdash; Runescape Resource Terminal Token &mdash; BTC L1 OP20</div>
+
+  <div class="box">
+    <div class="box-title">&#x1F7E0; V1 CONTRACT &mdash; LIVE NOW (Testnet)</div>
+    <div class="box-body">
+      <p><strong style="color:#f0c030;">Total Supply: 1,000,000 RST</strong></p>
+      <div class="supply-bar">
+        <div class="supply-lp">500,000 RST &mdash; LP</div>
+        <div class="supply-play">500,000 RST &mdash; Players</div>
+      </div>
+      <ul>
+        <li>&#x1F4B0; 500,000 RST &mdash; Deployer reserve (LP seeding)</li>
+        <li>&#x1F3AE; 500,000 RST &mdash; Player claim pool (earn in-game &#x2192; claim on-chain)</li>
+        <li>&#x2705; Basic earn &amp; claim system active &mdash; chop logs, sell to merchant, claim RST to your wallet</li>
+        <li>&#x2705; LP pool live on MotoSwap NativeSwap &mdash; RST tradeable now</li>
+        <li>&#x1F525; 1% swap fee on every trade goes to the LP</li>
+      </ul>
+      <div class="contract-addr">V1 Contract: <span>opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl</span></div>
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="box-title">&#x1F451; RANKS &mdash; Earn Your Place on Mainnet</div>
+    <div class="box-body">
+      <p>Early players earn ranks. Ranks carry to Mainnet. Your wallet history is your reputation.</p>
+      <div class="rank-grid">
+        <div class="rank-card"><span class="rank-icon">&#x1F947;</span><div class="rank-name">OG</div><div class="rank-desc">V1 LP traders</div></div>
+        <div class="rank-card"><span class="rank-icon">&#x1F396;</span><div class="rank-name">Veteran</div><div class="rank-desc">V2 stakers</div></div>
+        <div class="rank-card"><span class="rank-icon">&#x1F6E1;</span><div class="rank-name">Officer</div><div class="rank-desc">V3 participants</div></div>
+        <div class="rank-card"><span class="rank-icon">&#x1F451;</span><div class="rank-name">Master</div><div class="rank-desc">V4 &mdash; TBD</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="box-title">&#x1F4C8; HOW TO EARN RST</div>
+    <div class="box-body">
+      <p>This is a BTC L1 Free-to-Play, Play-to-Earn game. <strong style="color:#44cc44;">No purchase required.</strong></p>
+      <div class="step"><div class="step-num">1</div><div class="step-text">Download <a href="https://opnet.org/opwallet/" target="_blank" style="color:#8ebc44;">OP_WALLET</a></div></div>
+      <div class="step"><div class="step-num">2</div><div class="step-text">Load Bitcoin (testnet BTC for now &mdash; Mainnet at launch)</div></div>
+      <div class="step"><div class="step-num">3</div><div class="step-text">Connect wallet &#x2192; enter username &#x2192; play</div></div>
+      <div class="step"><div class="step-num">4</div><div class="step-text">Mine ores, chop trees, sell resources &#x2192; GP converts to RST</div></div>
+      <div class="step"><div class="step-num">5</div><div class="step-text">Claim RST directly to your Bitcoin wallet on-chain</div></div>
+      <p style="margin-top:12px;color:#888;font-size:13px;">Conversion rate: 1,000 GP = 1 RST</p>
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="box-title">&#x1F512; STAKING CONTRACT &mdash; sRST</div>
+    <div class="box-body">
+      <p>Lock your RST to earn staking rewards. Longer locks = higher multiplier. All locks are enforced on-chain.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;">
+        <thead>
+          <tr style="border-bottom:1px solid #444;color:#f0c030;">
+            <th style="text-align:left;padding:8px 10px;">Tier</th>
+            <th style="text-align:center;padding:8px 10px;">Multiplier</th>
+            <th style="text-align:center;padding:8px 10px;">Lock</th>
+            <th style="text-align:center;padding:8px 10px;">Exit Fee</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #333;">
+            <td style="padding:8px 10px;">&#x1F7E2; Flexible</td>
+            <td style="text-align:center;padding:8px 10px;">1&times;</td>
+            <td style="text-align:center;padding:8px 10px;color:#888;">No lock</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff8844;">20% (anytime)</td>
+          </tr>
+          <tr style="border-bottom:1px solid #333;">
+            <td style="padding:8px 10px;">&#x1F7E1; 30-Day</td>
+            <td style="text-align:center;padding:8px 10px;color:#f0c030;font-weight:bold;">5&times;</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff4444;">HARD LOCK</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff8844;">10% (after expiry)</td>
+          </tr>
+          <tr style="border-bottom:1px solid #333;">
+            <td style="padding:8px 10px;">&#x1F7E0; 90-Day</td>
+            <td style="text-align:center;padding:8px 10px;color:#f0c030;font-weight:bold;">4&times;</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff4444;">HARD LOCK</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff8844;">5% (after expiry)</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;">&#x1F534; 180-Day</td>
+            <td style="text-align:center;padding:8px 10px;color:#f0c030;font-weight:bold;">2.5&times;</td>
+            <td style="text-align:center;padding:8px 10px;color:#ff4444;">HARD LOCK</td>
+            <td style="text-align:center;padding:8px 10px;color:#44cc44;">1% (after expiry)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="color:#888;font-size:12px;">Exit fees are burned. Hard locks cannot be broken early — funds are inaccessible until the lock expires on-chain.</p>
+      <div class="contract-addr">sRST Contract: <span>opt1sqzn9sjwyjm9cwnfxn8ympasxpedt2mjzwuxww4tx</span></div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;">
+    <a class="cta cta-orange" href="/play">&#x2694;&#xFE0F; Play &amp; Earn Now</a>
+    <a class="cta" href="https://motoswap.org" target="_blank">&#x1F4B1; Buy RST on MotoSwap</a>
+  </div>
+</div>
+</body>
+</html>`;
+                return new Response(tokenomicsHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            // Difficulty page
+            if (url.pathname === '/difficulty') {
+                const difficultyHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Difficulty — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:800px; margin:0 auto; padding:30px 16px 60px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:36px; background:linear-gradient(180deg,#f0e080 0%,#c08010 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+.sub { color:#888; font-size:14px; margin-bottom:28px; }
+.phase { border:1px solid #3a3000; background:#0e0c04; margin-bottom:18px; overflow:hidden; }
+.phase-header { padding:14px 18px; font-size:16px; font-weight:bold; display:flex; align-items:center; gap:12px; border-bottom:1px solid #2a2000; }
+.phase-header.p1 { background:linear-gradient(90deg,#2a0808,#0e0c04); color:#ff4444; }
+.phase-header.p2 { background:linear-gradient(90deg,#2a1a00,#0e0c04); color:#f7931a; }
+.phase-header.p3 { background:linear-gradient(90deg,#0a2a0a,#0e0c04); color:#44cc44; }
+.badge { font-size:12px; font-weight:normal; padding:3px 8px; border-radius:3px; }
+.badge.p1 { background:#3a0808; color:#ff6666; }
+.badge.p2 { background:#3a2000; color:#ffaa44; }
+.badge.p3 { background:#0a2a0a; color:#66ee66; }
+.phase-body { padding:16px 18px; }
+.phase-body ul { list-style:none; columns:2; column-gap:20px; }
+.phase-body ul li { padding:4px 0; font-size:13px; color:#c8c8b8; break-inside:avoid; }
+.phase-body ul li::before { content:"\2022"; color:#666; margin-right:6px; }
+.phase-body p { font-size:14px; color:#aaa; line-height:1.6; margin-bottom:6px; }
+.earn-box { background:#080808; border:1px solid #2a2000; padding:14px; margin-top:14px; }
+.earn-box h4 { color:#f0c030; margin-bottom:8px; }
+.earn-box p { font-size:13px; color:#aaa; line-height:1.7; }
+.guide-box { border:1px solid #2a3a1a; background:#081008; margin-top:24px; overflow:hidden; }
+.guide-box-title { padding:12px 16px; background:linear-gradient(90deg,#0a2000,#081008); border-bottom:1px solid #1a3000; color:#8ebc44; font-weight:bold; }
+.guide-body { padding:16px; }
+.guide-body p { font-size:13px; color:#aaa; line-height:1.8; margin-bottom:12px; }
+.guide-body p:last-child { margin-bottom:0; }
+.guide-links { display:flex; gap:12px; padding:12px 16px; background:#060e04; border-top:1px solid #1a3000; flex-wrap:wrap; }
+.guide-links a { color:#8ebc44; font-size:13px; text-decoration:none; }
+.guide-links a:hover { text-decoration:underline; }
+.cta { display:inline-block; margin-top:24px; background:linear-gradient(180deg,#5a1010,#3a0808); border:1px solid #8a2020; color:#f0c030; padding:10px 24px; text-decoration:none; font-weight:bold; }
+.cta:hover { background:linear-gradient(180deg,#7a2020,#5a1010); }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav><a href="/">&#8592; Home</a><a href="/play">Play Now</a><a href="/roadmap">Roadmap</a><a href="/tokenomics">Tokenomics</a></nav>
+  <h1>&#x1F30D; Difficulty System</h1>
+  <div class="sub">Unlock more of the world by earning RST</div>
+
+  <div class="phase">
+    <div class="phase-header p1">&#x1F534; Phase 1 &mdash; Kingdom of Misthalin <span class="badge p1">0 RST &mdash; EXTREME HARDCORE</span></div>
+    <div class="phase-body">
+      <p>Everyone starts here. No RST required. No player trading.</p>
+      <ul>
+        <li>Lumbridge</li>
+        <li>Draynor Village &amp; Draynor Manor</li>
+        <li>Varrock &amp; Palace &amp; Lumber Yard</li>
+        <li>Edgeville &amp; Cooks&apos; Guild</li>
+        <li>Barbarian Village</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header p2">&#x1F7E0; Phase 2 &mdash; Kingdom of Asgarnia <span class="badge p2">10 RST &mdash; HARD MODE</span></div>
+    <div class="phase-body">
+      <p>Earn 10 RST to unlock the western kingdom. 10,000 GP trade cap.</p>
+      <ul>
+        <li>Everything in Phase 1</li>
+        <li>Falador &amp; White Knights&apos; Castle</li>
+        <li>Port Sarim &amp; Rimmington</li>
+        <li>Taverly &amp; Burthorpe &amp; Hero&apos;s Guild</li>
+        <li>Ice Mountain &amp; Dwarven Mine &amp; Monastery</li>
+        <li>Goblin Village &amp; Black Knights&apos; Castle</li>
+        <li>Wizards&apos; Tower &amp; Lumbridge Swamp</li>
+        <li>Al Kharid &amp; Duel Arena &amp; Dig Site</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-header p3">&#x1F7E2; Phase 3 &mdash; Full World <span class="badge p3">1,000 RST or Stake &mdash; EASY MODE</span></div>
+    <div class="phase-body">
+      <p>Unlimited trading, full Gielinor. Two paths to unlock:</p>
+      <ul>
+        <li>Earn 1,000 RST &mdash; own it, no staking required</li>
+        <li>Stake any RST &mdash; 10+ RST unlocks instantly</li>
+        <li>Kandarin (Seers&apos; Village, Catherby, Ardougne)</li>
+        <li>Morytania (Canifis, Barrows)</li>
+        <li>Karamja (Brimhaven, TzHaar)</li>
+        <li>Desert &amp; Feldip Hills &amp; Tirannwn, and more</li>
+      </ul>
+      <div class="earn-box">
+        <h4>&#x1F4B0; How to Earn RST</h4>
+        <p>Chop logs &#x2192; sell at General Store &#x2192; GP converts to RST automatically. <strong style="color:#f0c030;">1,000 GP = 1 RST.</strong><br>The harder you grind, the more you unlock. Can you reach the full world? &#x1F30D;</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="guide-box">
+    <div class="guide-box-title">&#x1F4D6; Player Guide &mdash; by the Triforce Sage</div>
+    <div class="guide-body">
+      <p>Playing RuneScape is a lot like playing chess &mdash; there are many different ways to go about it. This server runs on the 2004 RS2 client: the upgrade that defined a generation. No Grand Exchange, no bonds &mdash; just the grind.</p>
+      <p>In 2004&ndash;2006, 1 million GP was worth $5 USD on the black market. Partyhats were 100M GP. The Venezuela gold farming era documented something fascinating: a broken national economy found real income in a virtual world. Jagex invented Bonds in 2013 to capture that market &mdash; essentially an in-game stablecoin backed by membership time, with a floating GP exchange rate. They became the biggest gold seller without anyone realising it.</p>
+      <p>Resource Terminal takes the next step: on-chain settlement. The RWT market is already $50&ndash;120M/year in the dark. RST just makes it transparent and legitimate. The gap between &ldquo;this already happens&rdquo; and &ldquo;this happens on a chain&rdquo; is smaller than most people think.</p>
+    </div>
+    <div class="guide-links">
+      <a href="https://oldschool.runescape.wiki/" target="_blank">&#x1F4D8; Official Wiki</a>
+      <a href="/play">&#x2694;&#xFE0F; Start Playing</a>
+      <a href="/roadmap">&#x1F5FA; Roadmap</a>
+    </div>
+  </div>
+
+  <div style="margin-top:24px;text-align:center">
+    <a href="/disclaimer" style="color:#555;font-size:11px;text-decoration:none" onmouseover="this.style.color='#8ebc44'" onmouseout="this.style.color='#555'">Non-Affiliation Disclaimer &#x2197;</a>
+  </div>
+
+  <a class="cta" href="/play">&#x2694;&#xFE0F; Start Grinding</a>
+</div>
+</body>
+</html>`;
+                return new Response(difficultyHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            // Beginner's Guide
+            if (url.pathname === '/guide') {
+                const guideHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beginner's Guide — Resource Terminal</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a08; color:#c8c8b8; font-family:Arial,sans-serif; min-height:100vh; }
+.page { max-width:760px; margin:0 auto; padding:30px 16px 60px; }
+nav { margin-bottom:24px; font-size:13px; }
+nav a { color:#8ebc44; text-decoration:none; margin-right:16px; }
+nav a:hover { text-decoration:underline; }
+h1 { font-family:Georgia,serif; font-size:36px; background:linear-gradient(180deg,#f0e080 0%,#c08010 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+.sub { color:#888; font-size:14px; margin-bottom:28px; }
+.section { border:1px solid #3a2800; background:#0e0c04; margin-bottom:18px; overflow:hidden; }
+.section-header { padding:12px 16px; font-weight:bold; font-size:15px; display:flex; align-items:center; gap:10px; background:linear-gradient(90deg,#1a1000,#0e0c04); border-bottom:1px solid #3a2800; color:#f0c030; }
+.section-body { padding:16px; }
+.section-body p { font-size:13px; color:#aaa; line-height:1.9; margin-bottom:12px; }
+.section-body p:last-child { margin-bottom:0; }
+.section-body ul { padding-left:20px; margin-bottom:12px; }
+.section-body li { font-size:13px; color:#aaa; line-height:1.9; }
+.step { display:flex; gap:12px; align-items:flex-start; margin-bottom:14px; }
+.step-num { background:#3a2800; border:1px solid #f0c030; color:#f0c030; font-weight:bold; font-size:13px; min-width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:3px; flex-shrink:0; margin-top:2px; }
+.step-text { font-size:13px; color:#aaa; line-height:1.8; }
+.step-text strong { color:#f0c030; }
+.highlight-box { background:#0a1800; border:1px solid #2a4000; border-left:3px solid #8ebc44; padding:12px 16px; margin:14px 0; border-radius:0 4px 4px 0; }
+.highlight-box p { color:#8ebc44 !important; font-size:13px; line-height:1.8; margin:0 !important; }
+.bitcoin-box { background:#100800; border:1px solid #4a2800; border-left:3px solid #f7931a; padding:12px 16px; margin:14px 0; border-radius:0 4px 4px 0; }
+.bitcoin-box p { color:#f0a060 !important; font-size:13px; line-height:1.8; margin:0 !important; }
+.convert-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:14px 0; font-size:13px; }
+.convert-pill { background:#1a1200; border:1px solid #3a2800; color:#f0c030; padding:6px 14px; border-radius:3px; font-weight:bold; }
+.convert-arrow { color:#555; font-size:18px; }
+.cta { display:inline-block; margin-top:24px; background:linear-gradient(180deg,#5a1010,#3a0808); border:1px solid #8a2020; color:#f0c030; padding:10px 24px; text-decoration:none; font-weight:bold; }
+.cta:hover { background:linear-gradient(180deg,#7a2020,#5a1010); }
+footer-links { margin-top:18px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav>
+    <a href="/">&#x2190; Home</a>
+    <a href="/play">Play Now</a>
+    <a href="/roadmap">Roadmap</a>
+  </nav>
+
+  <h1>Beginner's Guide</h1>
+  <p class="sub">New to Resource Terminal? Start here. Two skills, infinite grind, real Bitcoin.</p>
+
+  <!-- WOODCUTTING -->
+  <div class="section">
+    <div class="section-header">&#x1FA93; Woodcutting — Your First Gold</div>
+    <div class="section-body">
+      <p>When you first spawn in Lumbridge, you have a woodcutting axe in your inventory. Trees are everywhere. This is where the grind begins.</p>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text"><strong>Find a tree.</strong> Walk east from Lumbridge castle. You'll see regular trees lining the path. Click on one — your character will start chopping automatically.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text"><strong>Wait for logs.</strong> Each chop attempt has a chance of success based on your Woodcutting level. Logs will appear in your inventory. Keep chopping until your inventory fills up (28 slots).</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>Sell at the General Store.</strong> Walk north to the Lumbridge General Store. Click "Sell" and sell all your logs. The shop pays GP based on supply and demand — the less logs they have in stock, the more they pay you.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text"><strong>Repeat.</strong> Every 1,000 GP you earn converts to 1 RST automatically. The merchant handles it. You just grind.</div>
+      </div>
+
+      <div class="highlight-box">
+        <p>&#x2B06; As your Woodcutting level grows, you unlock better trees: <strong>Willows</strong> (level 30) in Draynor Village, <strong>Maples</strong> (level 45), and <strong>Yews</strong> (level 60) in Edgeville — each paying significantly more GP per log.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MINING -->
+  <div class="section">
+    <div class="section-header">&#x26CF;&#xFE0F; Mining — Digging for Bitcoin</div>
+    <div class="section-body">
+      <p>Mining is the second core skill. You need a pickaxe — buy one at the General Store for a few coins if you don't already have one. Then head to any mine.</p>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text"><strong>Get a pickaxe.</strong> A bronze pickaxe from the General Store will do to start. Better pickaxes require higher Mining levels — iron (level 1), steel (level 6), mithril (level 21), rune (level 41).</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text"><strong>Find a mine.</strong> The Varrock East Mine (northeast of Varrock) has iron, copper, and tin rocks. The Varrock West Mine has copper and tin. Click a rock to start mining it.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>Mine until full.</strong> Ore goes straight to your inventory. When you hit 28 items, walk to the Varrock East bank, deposit everything, then head back to the mine.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text"><strong>Sell your ore.</strong> Bring your ores to the General Store or hold them. Iron ore pays well early game. Coal and mithril from the Mining Guild (level 60) pay the most.</div>
+      </div>
+
+      <div class="highlight-box">
+        <p>&#x26A1; <strong>Power miners</strong> drop ore on the ground instead of banking — trading profit for faster XP. Once your Mining level is high enough to mine fast rocks, the XP rate matters more than the GP per trip.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- WHY IT MATTERS -->
+  <div class="section">
+    <div class="section-header">&#x20BF; Why This Matters — GP to Bitcoin</div>
+    <div class="section-body">
+      <p>Here's the part that's different from any other private server. Every GP you earn isn't just a number in a database — it gets converted to <strong style="color:#f7931a;">$RST</strong>, an OP20 token deployed on the Bitcoin blockchain via OPNet.</p>
+
+      <div class="convert-row">
+        <div class="convert-pill">Chop logs / Mine ore</div>
+        <div class="convert-arrow">&#x2192;</div>
+        <div class="convert-pill">Sell for GP</div>
+        <div class="convert-arrow">&#x2192;</div>
+        <div class="convert-pill">1,000 GP = 1 RST</div>
+        <div class="convert-arrow">&#x2192;</div>
+        <div class="convert-pill">RST on Bitcoin</div>
+      </div>
+
+      <div class="bitcoin-box">
+        <p>OPNet is a smart contract layer that runs <em>inside</em> Bitcoin transactions using Tapscript. Your RST tokens are settled directly on the Bitcoin blockchain — not a sidechain, not a wrapped token, not a bridge. Real Bitcoin finality.</p>
+      </div>
+
+      <p>Once you have RST in your OP_WALLET, you can:</p>
+      <ul>
+        <li>Hold it &mdash; account value grows as more players join</li>
+        <li>Stake it at the sRST contract to earn passive rewards from game fees</li>
+        <li>Trade it on MotoSwap (NativeSwap) for BTC directly</li>
+        <li>Use it to unlock harder areas of the game world</li>
+      </ul>
+
+      <p>The Venezuela gold farming era proved that broken economies could find real income in virtual ones. Jagex captured that market in 2013 with Bonds — an in-game stablecoin backed by membership. Resource Terminal goes further: <strong style="color:#f0c030;">the GP settlement is on-chain and transparent.</strong> Your grind is your ledger entry. Bob says so every hour.</p>
+
+      <div class="highlight-box">
+        <p>&#x1F9E0; The harder you grind, the more the world unlocks. Phase 1 (Misthalin) is free. Earn 10 RST and Asgarnia opens up. Hit 1,000 RST and the full world is yours — Karamja, Morytania, Kandarin, everything.</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:24px;text-align:center">
+    <a href="/disclaimer" style="color:#555;font-size:11px;text-decoration:none" onmouseover="this.style.color='#8ebc44'" onmouseout="this.style.color='#555'">Non-Affiliation Disclaimer &#x2197;</a>
+  </div>
+
+  <a class="cta" href="/play">&#x2694;&#xFE0F; Start Grinding</a>
+</div>
+</body></html>`;
+                return new Response(guideHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+            }
+
+            // Homepage — landing page for Resource Terminal
+            if (url.pathname === '/' || url.pathname === '/home') {
+                const homepageHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resource Terminal - Bitcoin-Powered RuneScape</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a08;
+  background-image: radial-gradient(ellipse at 20% 50%, #1a1200 0%, transparent 50%),
+                    radial-gradient(ellipse at 80% 20%, #0e0c00 0%, transparent 50%);
+  font-family: Arial, Helvetica, sans-serif;
+  color: #c8c8b8;
+  min-height: 100vh;
+  font-size: 14px;
+}
+/* Subtle coin texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23f0c030' fill-opacity='0.03'%3E%3Ccircle cx='30' cy='30' r='12'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+.page { position: relative; z-index: 1; max-width: 980px; margin: 0 auto; padding: 20px 16px 40px; }
+
+/* ── TOP ROW ── */
+.top-row { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
+.logo-block { flex: 0 0 300px; text-align: center; }
+.logo-title {
+  font-size: 52px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  line-height: 1.0;
+  background: linear-gradient(180deg, #f0e080 0%, #c08010 50%, #7a5000 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  font-family: Georgia, serif;
+}
+.logo-subtitle { color: #888; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; margin-top: 4px; }
+.player-count { margin-top: 16px; color: #c8c8b8; font-size: 14px; }
+.player-count strong { color: #f0c030; }
+.rst-ticker {
+  margin-top: 14px;
+  display: inline-block;
+  background: #1a1200;
+  border: 1px solid #3a2800;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #f7931a;
+  letter-spacing: 1px;
+}
+
+/* News box */
+.news-box {
+  flex: 1;
+  border: 1px solid #3a3000;
+  background: linear-gradient(135deg, #0e0c04 0%, #141000 100%);
+  padding: 14px 16px;
+}
+.news-box h2 { text-align: center; color: #f0c030; font-size: 14px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #2a2000; padding-bottom: 8px; }
+.news-list { list-style: none; }
+.news-list li { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #111008; }
+.news-list a { color: #8ebc44; text-decoration: none; font-size: 13px; }
+.news-list a:hover { text-decoration: underline; color: #c0e060; }
+.news-date { color: #666; font-size: 12px; white-space: nowrap; margin-left: 12px; }
+.news-footer { margin-top: 10px; text-align: center; color: #888; font-size: 12px; }
+.news-footer a { color: #8ebc44; text-decoration: none; }
+
+/* ── RST PRICE TICKER ── */
+.price-ticker {
+  display: flex; align-items: center; gap: 0;
+  font-size: 12px; font-family: monospace;
+  flex-wrap: wrap;
+}
+.price-ticker-label { color: #f0c030; font-weight: bold; font-size: 12px; letter-spacing: 1px; padding-right: 12px; border-right: 1px solid #3a2800; margin-right: 12px; white-space: nowrap; }
+.price-ticker-item { display: flex; align-items: center; gap: 5px; padding: 0 12px; border-right: 1px solid #2a2000; white-space: nowrap; }
+.price-ticker-item:last-child { border-right: none; }
+.price-ticker-key { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+.price-ticker-val { color: #f0c030; font-weight: bold; }
+.price-ticker-sub { color: #888; font-size: 10px; }
+.price-ticker-link { color: #8ebc44; text-decoration: none; font-size: 11px; }
+.price-ticker-link:hover { color: #c0e060; text-decoration: underline; }
+.price-loading { color: #444; }
+
+/* ── MAIN FEATURES ── */
+.section-box {
+  border: 1px solid #3a3000;
+  background: linear-gradient(135deg, #0e0c04 0%, #141000 100%);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.section-box h2 { text-align: center; color: #f0c030; font-size: 14px; font-weight: bold; margin-bottom: 16px; }
+.features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feature-card { text-align: center; }
+.feature-icon { font-size: 42px; line-height: 1; margin-bottom: 8px; display: block; }
+.feature-btn {
+  display: block;
+  background: linear-gradient(180deg, #5a1010 0%, #3a0808 100%);
+  border: 1px solid #8a2020;
+  color: #f0c030;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+.feature-btn:hover { background: linear-gradient(180deg, #7a2020 0%, #5a1010 100%); }
+.feature-btn.blue {
+  background: linear-gradient(180deg, #103050 0%, #081830 100%);
+  border-color: #205080;
+}
+.feature-btn.blue:hover { background: linear-gradient(180deg, #204060 0%, #103050 100%); }
+.feature-btn.green {
+  background: linear-gradient(180deg, #103010 0%, #081808 100%);
+  border-color: #208020;
+}
+.feature-btn.green:hover { background: linear-gradient(180deg, #204020 0%, #103010 100%); }
+.feature-desc { color: #c8c8b8; font-size: 13px; line-height: 1.5; }
+.feature-link { display: block; color: #8ebc44; text-decoration: none; margin-top: 4px; font-size: 13px; }
+.feature-link:hover { text-decoration: underline; }
+
+/* ── BOTTOM GRID ── */
+.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sub-card { border: 1px solid #2a2000; background: #0a0800; padding: 10px; }
+.sub-card-title {
+  text-align: center;
+  background: linear-gradient(180deg, #2a2400 0%, #1a1600 100%);
+  border: 1px solid #3a3000;
+  color: #f0c030;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 6px;
+  margin: -10px -10px 10px;
+  display: block;
+}
+.sub-card-inner { display: flex; align-items: flex-start; gap: 8px; }
+.sub-icon { font-size: 26px; flex-shrink: 0; line-height: 1; margin-top: 2px; }
+.sub-text { font-size: 12px; color: #c8c8b8; line-height: 1.5; }
+.sub-text a { color: #8ebc44; text-decoration: none; display: block; margin-top: 2px; }
+.sub-text a:hover { text-decoration: underline; }
+
+/* ── FOOTER ── */
+footer { text-align: center; color: #444; font-size: 11px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #1a1600; }
+footer a { color: #666; }
+
+/* responsive */
+@media (max-width: 700px) {
+  .top-row { flex-direction: column; }
+  .logo-block { flex: none; }
+  .features-grid { grid-template-columns: 1fr 1fr; }
+  .bottom-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TOP ROW: Logo + News -->
+  <div class="top-row">
+    <div class="logo-block">
+      <div class="logo-title">Resource<br>Terminal</div>
+      <div class="logo-subtitle">Bitcoin-Powered RuneScape</div>
+      <div class="rst-ticker">&#x20BF; $RST</div>
+      <div class="player-count" id="playerCount">There are currently <strong>...</strong> people playing!</div>
+      <div style="margin-top:14px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;" id="serverStats">
+        <div style="background:#1a1200;border:1px solid #3a2800;border-radius:6px;padding:8px 18px;text-align:center;min-width:100px;">
+          <div style="color:#f0c030;font-size:1.3em;font-weight:bold;" id="statOnline">—</div>
+          <div style="color:#888;font-size:11px;margin-top:2px;">Online Now</div>
+        </div>
+        <div style="background:#1a1200;border:1px solid #3a2800;border-radius:6px;padding:8px 18px;text-align:center;min-width:100px;">
+          <div style="color:#f0c030;font-size:1.3em;font-weight:bold;" id="statWallets">—</div>
+          <div style="color:#888;font-size:11px;margin-top:2px;">Wallets</div>
+        </div>
+        <div style="background:#1a1200;border:1px solid #3a2800;border-radius:6px;padding:8px 18px;text-align:center;min-width:100px;">
+          <div style="color:#f0c030;font-size:1.3em;font-weight:bold;" id="statLbEntries">—</div>
+          <div style="color:#888;font-size:11px;margin-top:2px;">RST Holders</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="news-box">
+      <h2>Latest News &amp; Updates</h2>
+      <ul class="news-list">
+        <li><a href="/news/world-gating">World Gating + Difficulty System Live</a><span class="news-date">Mar-2026</span></li>
+        <li><a href="/news/rst-staking">$RST Staking (sRST) Deployed</a><span class="news-date">Mar-2026</span></li>
+        <li><a href="/news/rst-v8">RST v8 — Full End-to-End Claim Working</a><span class="news-date">Mar-2026</span></li>
+        <li><a href="/news/motoswap-lp">MotoSwap LP Created</a><span class="news-date">Mar-2026</span></li>
+        <li><a href="/news/alpha-launch">Resource Terminal Alpha Launch</a><span class="news-date">Feb-2026</span></li>
+      </ul>
+      <div class="news-footer">Earn RST by playing. &mdash; <a href="/play">Connect &amp; Play Now</a></div>
+    </div>
+  </div>
+
+  <!-- TESTNET DISCLAIMER -->
+  <div style="background:#1a0000;border:2px solid #cc0000;border-radius:6px;padding:10px 18px;margin-bottom:12px;text-align:center;">
+    <span style="color:#ff2222;font-weight:bold;font-size:13px;letter-spacing:0.5px;">&#x26A0; This project is currently in testing phase on OP_NET Testnet &mdash; <a href="https://mempool.opnet.org/testnet4" target="_blank" rel="noopener" style="color:#ff6666;text-decoration:underline;">mempool.opnet.org/testnet4</a></span>
+  </div>
+
+  <!-- RST PRICE TICKER -->
+  <div class="section-box" style="margin-bottom:18px;padding:8px 16px">
+    <div class="price-ticker">
+      <span class="price-ticker-label">&#x20BF; $RST</span>
+      <div class="price-ticker-item">
+        <span class="price-ticker-key">Price</span>
+        <span class="price-ticker-val" id="rstPriceSats"><span class="price-loading">…</span></span>
+        <span class="price-ticker-sub" id="rstPriceUSD"></span>
+      </div>
+      <div class="price-ticker-item">
+        <span class="price-ticker-key">Pool</span>
+        <span class="price-ticker-val" id="rstLiqRST"><span class="price-loading">…</span></span>
+        <span class="price-ticker-sub" id="rstLiqBTC"></span>
+      </div>
+      <div class="price-ticker-item">
+        <a class="price-ticker-link" href="https://motoswap.org/token/0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1" target="_blank">Trade on MotoSwap &#x2197;</a>
+      </div>
+      <div class="price-ticker-item">
+        <a class="price-ticker-link" href="https://opscan.org/tokens/0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1?network=op_testnet" target="_blank">OPScan &#x2197;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN FEATURES -->
+  <div class="section-box">
+    <h2>Main Features</h2>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <span class="feature-icon">&#x2694;&#xFE0F;</span>
+        <a class="feature-btn" href="/play">Play Now<br><small>(Existing Account)</small></a>
+        <div class="feature-desc">Play Resource Terminal &amp; earn $RST on Bitcoin.</div>
+        <a class="feature-link" href="/play">Click Here</a>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F4F2;</span>
+        <a class="feature-btn blue" href="https://opnet.org/opwallet/" target="_blank">Download<br>OP_WALLET</a>
+        <div class="feature-desc">Install the Bitcoin wallet to claim &amp; stake your $RST.</div>
+        <a class="feature-link" href="https://opnet.org/opwallet/" target="_blank">Get Extension</a>
+      </div>
+
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F3C6;</span>
+        <a class="feature-btn green" href="/rst/leaderboard">Leaderboard<br><small>(Top Players)</small></a>
+        <div class="feature-desc">See who has earned the most $RST on the chain.</div>
+        <a class="feature-link" href="/rst/leaderboard">Click Here</a>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW -->
+  <div class="bottom-row">
+
+    <!-- LEFT: Game Info -->
+    <div class="section-box" style="margin-bottom:0">
+      <h2>How to Play</h2>
+      <div class="sub-grid">
+
+        <div class="sub-card" style="grid-column:span 2">
+          <span class="sub-card-title">&#x26CF;&#xFE0F; The Story</span>
+          <div class="sub-card-inner" style="align-items:flex-start">
+            <span class="sub-icon">&#x1F30D;</span>
+            <div class="sub-text">
+              You wake up in Lumbridge with nothing but an axe and a pickaxe. <strong style="color:#d4af37">You are stuck in this world.</strong> The only way out is through &mdash; chop trees, mine ore, sell your resources and keep grinding.<br><br>
+              As you progress, you earn <strong style="color:#f0c030">$RST</strong> &mdash; a real Bitcoin token. Stack enough RST and your world expands: new regions, harder content, bigger rewards. <strong style="color:#8ebc44">The grind is the game. The game pays in $BTC.</strong><br><br>
+              Convert your RST to Bitcoin on <a href="https://motoswap.org" target="_blank">Motoswap</a>. No bank. No permission. Just play.
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x20BF; Earn $RST &rarr; $BTC</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F4B0;</span>
+            <div class="sub-text">
+              Sell logs &amp; ore to the merchant. Earn RST on-chain. Swap RST for BTC on Motoswap &mdash; real money, real Bitcoin.
+              <a href="/rst/claim">Claim RST</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F4AA; Difficulty &amp; Tiers</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F480;</span>
+            <div class="sub-text">
+              0 RST: Hardcore &mdash; Misthalin only<br>
+              10 RST: Hard &mdash; +Falador/Wilderness<br>
+              1000 RST: Normal &mdash; Full world
+              <a href="/difficulty">Learn More</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F30D; World Map</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F5FA;&#xFE0F;</span>
+            <div class="sub-text">
+              Explore Gielinor. Unlock more regions as your RST balance grows.
+              <a href="https://runescaperesourceterminal.duckdns.org/mapview/" target="_blank">View Map</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F4D6; Beginner's Guide</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1FA93;</span>
+            <div class="sub-text">
+              How to chop trees, mine ores, and turn your grind into Bitcoin.
+              <a href="/guide">Read Guide</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RIGHT: $RST & Links -->
+    <div class="section-box" style="margin-bottom:0">
+      <h2>$RST Token &amp; Links</h2>
+      <div class="sub-grid">
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x20BF; Tokenomics</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F4B0;</span>
+            <div class="sub-text">
+              1M supply. 500k LP. 500k earned in-game.<br>
+              1% LP burn on trades.
+              <a href="/tokenomics">Read More</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F4C8; Roadmap</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F9ED;</span>
+            <div class="sub-text">
+              Fishing, smithing, new areas &amp; NFT logs.
+              <a href="/roadmap">See Roadmap</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F4AC; Discord</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F3AE;</span>
+            <div class="sub-text">
+              Join the community. Talk to the devs.
+              <a href="https://discord.gg/placeholder" target="_blank">Join Discord</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-card">
+          <span class="sub-card-title">&#x1F4BB; Source Code</span>
+          <div class="sub-card-inner">
+            <span class="sub-icon">&#x1F4D6;</span>
+            <div class="sub-text">
+              Open source. Built on OPNet + RS2.
+              <a href="https://github.com/ruggedbydiversityandorthetrifocesage" target="_blank">View GitHub</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Server Activity Analytics -->
+      <div style="margin-top:14px;border-top:1px solid #2a2000;padding-top:12px;">
+        <div style="color:#f0c030;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">&#x26A1; Server Activity</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <button onclick="switchActivityTab('1h')" id="tab1h" style="background:#2a1a00;border:1px solid #f0c030;color:#f0c030;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">1H</button>
+          <button onclick="switchActivityTab('6h')" id="tab6h" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">6H</button>
+          <button onclick="switchActivityTab('24h')" id="tab24h" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">24H</button>
+          <span style="margin-left:auto;color:#555;font-size:10px;align-self:center;" id="activityUpdated"></span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <div style="background:#1a1200;border:1px solid #2a1a00;border-radius:4px;padding:6px 10px;flex:1;text-align:center;">
+            <div style="color:#f0c030;font-size:1.1em;font-weight:bold;" id="actTotalRST">—</div>
+            <div style="color:#888;font-size:10px;margin-top:1px;">RST Earned</div>
+          </div>
+          <div style="background:#1a1200;border:1px solid #2a1a00;border-radius:4px;padding:6px 10px;flex:1;text-align:center;">
+            <div style="color:#f0c030;font-size:1.1em;font-weight:bold;" id="actPlayers">—</div>
+            <div style="color:#888;font-size:10px;margin-top:1px;">Active Players</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:#666;margin-bottom:5px;letter-spacing:1px;" id="actEarnersLabel">TOP EARNERS</div>
+        <div id="actTopList" style="font-size:12px;">
+          <div style="color:#444;font-size:11px;padding:4px 0;">Loading...</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- end bottom-row -->
+
+  <div style="border:1px solid #2a2000;background:#080600;padding:10px 24px;margin-top:4px;margin-bottom:0;display:flex;justify-content:space-between;align-items:center">
+    <span style="color:#f0c030;font-size:12px;font-weight:bold;letter-spacing:1px">NON-AFFILIATION DISCLAIMER</span>
+    <a href="/disclaimer" style="color:#666;font-size:11px;text-decoration:none" onmouseover="this.style.color='#8ebc44'" onmouseout="this.style.color='#666'">Read full disclaimer &#x2197;</a>
+  </div>
+  <footer>
+    <a href="/play">Play Now</a> &mdash; <a href="/rst/claim">Claim $RST</a> &mdash; <a href="/disclaimer">Disclaimer</a>
+  </footer>
+</div>
+
+<script>
+fetch('/rst/online-players')
+  .then(r => r.json())
+  .then(d => {
+    const count = Array.isArray(d.players) ? d.players.length : (d.players || 0);
+    const el = document.getElementById('playerCount');
+    if (el) el.innerHTML = 'There are currently <strong>' + count + '</strong> people playing!';
+    const statOnline = document.getElementById('statOnline');
+    if (statOnline) statOnline.textContent = count;
+  })
+  .catch(() => {});
+fetch('/rst/server-stats')
+  .then(r => r.json())
+  .then(d => {
+    const sw = document.getElementById('statWallets');
+    if (sw) sw.textContent = d.wallets ?? '—';
+    const sl = document.getElementById('statLbEntries');
+    if (sl) sl.textContent = d.leaderboard ?? '—';
+  })
+  .catch(() => {});
+fetch('/rst/price')
+  .then(r => r.json())
+  .then(d => {
+    if (!d || d.error) return;
+    const satsEl = document.getElementById('rstPriceSats');
+    const usdEl = document.getElementById('rstPriceUSD');
+    const liqRST = document.getElementById('rstLiqRST');
+    const liqBTC = document.getElementById('rstLiqBTC');
+    if (satsEl) satsEl.textContent = d.priceInSats.toLocaleString() + ' sats';
+    if (usdEl && d.btcUSD) {
+      const usd = (d.priceInSats / 1e8 * d.btcUSD).toFixed(4);
+      usdEl.textContent = '≈ $' + usd + ' USD';
+    }
+    if (liqRST) liqRST.textContent = Number(d.liquidityRST).toLocaleString() + ' RST';
+    if (liqBTC) liqBTC.textContent = (d.liquiditySats / 1e8).toFixed(4) + ' BTC';
+  })
+  .catch(() => {});
+
+// Activity analytics
+var _activityData = null;
+var _activeTab = '1h';
+function switchActivityTab(tab) {
+  _activeTab = tab;
+  ['1h','6h','24h'].forEach(function(t) {
+    var btn = document.getElementById('tab' + t);
+    if (!btn) return;
+    if (t === tab) {
+      btn.style.background = '#2a1a00'; btn.style.borderColor = '#f0c030'; btn.style.color = '#f0c030';
+    } else {
+      btn.style.background = '#1a1200'; btn.style.borderColor = '#3a2800'; btn.style.color = '#888';
+    }
+  });
+  if (_activityData) renderActivity(_activityData);
+}
+function renderActivity(data) {
+  var d = data[_activeTab];
+  if (!d) return;
+  var rEl = document.getElementById('actTotalRST');
+  var pEl = document.getElementById('actPlayers');
+  var lEl = document.getElementById('actTopList');
+  var lblEl = document.getElementById('actEarnersLabel');
+  if (rEl) rEl.textContent = d.totalRST.toFixed(3) + ' RST';
+  if (pEl) pEl.textContent = d.players;
+  if (lblEl) lblEl.textContent = d.top && d.top.length > 0 ? 'EARNERS (' + d.top.length + ')' : 'EARNERS';
+  if (lEl) {
+    if (!d.top || d.top.length === 0) {
+      lEl.innerHTML = '<div style="color:#444;font-size:11px;padding:4px 0;">No activity yet</div>';
+    } else {
+      lEl.innerHTML = d.top.map(function(e, i) {
+        var medal = i === 0 ? '&#x1F947;' : i === 1 ? '&#x1F948;' : i === 2 ? '&#x1F949;' : (i + 1) + '.';
+        return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a1200;">' +
+          '<span style="color:#c8c8b8;">' + medal + ' <a href="/rst/player/' + encodeURIComponent(e.username) + '" style="color:#8ebc44;text-decoration:none;">' + e.username + '</a></span>' +
+          '<span style="color:#f0c030;">' + e.rst.toFixed(3) + ' RST</span></div>';
+      }).join('');
+    }
+  }
+  var uEl = document.getElementById('activityUpdated');
+  if (uEl) uEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+}
+function loadActivity() {
+  fetch('/rst/activity').then(function(r) { return r.json(); }).then(function(data) {
+    _activityData = data;
+    renderActivity(data);
+  }).catch(function() {});
+}
+loadActivity();
+setInterval(loadActivity, 60000);
+</script>
+</body>
+</html>`;
+                return new Response(homepageHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
             }
 
             // RST: Main game wrapper — game iframe + sidebar leaderboard + live mint prompt
@@ -502,6 +2070,16 @@ button.conn-btn:hover { background: #243300; }
 .htp-close:hover { color: #888; border-color: #555; }
 .htp-btn { width: 100%; background: #1a1200; border: 1px solid #f0c030; color: #f0c030; padding: 7px; font-family: monospace; font-size: 0.72em; cursor: pointer; border-radius: 3px; margin-bottom: 6px; text-align: center; }
 .htp-btn:hover { background: #2a2000; }
+/* Prices modal */
+.prices-modal-box { background: #0a0a0a; border: 2px solid #f0c030; padding: 24px 28px; max-width: 920px; width: 98%; border-radius: 4px; position: relative; }
+.prices-modal-box h1 { color: #f0c030; font-size: 1em; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+.prices-modal-box .htp-sub { color: #555; font-size: 0.72em; margin-bottom: 16px; border-bottom: 1px solid #1e1600; padding-bottom: 10px; }
+.prices-grid { display: flex; gap: 32px; flex-wrap: wrap; }
+.prices-section { flex-shrink: 0; }
+.prices-section h3 { color: #888; font-size: 0.62em; letter-spacing: 2px; text-transform: uppercase; padding-bottom: 5px; border-bottom: 1px solid #2a2000; margin-bottom: 6px; white-space: nowrap; }
+.prices-tbl { border-collapse: collapse; font-size: 0.73em; }
+.prices-tbl td { padding: 2px 16px 2px 0; color: #c0a060; white-space: nowrap; }
+.prices-tbl td:last-child { color: #f0c030; text-align: right; padding-right: 0; font-weight: bold; }
 /* RST Shop purchase confirmation modal */
 .shop-modal-box { border-color: #f7931a !important; }
 .shop-modal-box h2 { color: #f7931a !important; }
@@ -524,12 +2102,13 @@ button.conn-btn:hover { background: #243300; }
 </head>
 <body>
 <header>
-  <span class="logo">&#x26CF; RUNESCAPE RESOURCE TERMINAL</span>
+  <a href="/" style="text-decoration:none;color:inherit;"><span class="logo">&#x26CF; RUNESCAPE RESOURCE TERMINAL</span></a>
   <div style="display:flex;align-items:center;gap:12px;">
     <button onclick="document.getElementById('htpModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x2753; HOW TO PLAY</button>
     <button onclick="document.getElementById('dsModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x1F30D; DIFFICULTY</button>
     <button onclick="document.getElementById('tokenomicsModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x20BF; TOKENOMICS</button>
     <button onclick="document.getElementById('roadmapModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x1F5FA; ROADMAP</button>
+    <button onclick="document.getElementById('pricesModal').classList.add('show')" style="background:#1a1200;border:1px solid #f0c030;color:#f0c030;padding:5px 12px;font-family:monospace;font-size:0.72em;cursor:pointer;border-radius:3px;font-weight:bold;">&#x1F4B0; PRICES</button>
     <span id="walletStatus" class="wallet-status">No wallet connected — connect in the sidebar</span>
   </div>
 </header>
@@ -554,7 +2133,8 @@ button.conn-btn:hover { background: #243300; }
       <div class="stat-row"><span>RST Mempool</span><span id="statRSTMempool">0.0000 RST</span></div>
       <div class="stat-row"><span>RST Balance</span><span id="statRSTBal">-</span></div>
       <div class="stat-row"><span>sRST Staked</span><span id="statSRSTBal" style="color:#88ff88">-</span></div>
-      <div class="stat-row"><span>Rewards</span><span id="statPendingRewards" style="color:#f7931a">-</span></div>
+      <div class="stat-row"><span>Pending Rewards</span><span id="statPendingRewards" style="color:#f7931a">-</span></div>
+      <div class="stat-row"><span>Earned Rewards</span><span id="statEarnedRewards" style="color:#aaffaa">-</span></div>
       <div class="stat-row"><span>tBTC Balance</span><span id="statBTC">-</span></div>
       <div style="margin-top:6px;border-top:1px solid #2a2000;padding-top:6px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
@@ -585,7 +2165,7 @@ button.conn-btn:hover { background: #243300; }
     <div class="s-section">
       <h3>Most GP Converted</h3>
       <div id="leaderboard"><div style="color:#333;font-size:0.72em;text-align:center;padding:8px;">Loading...</div></div>
-      <a href="/hiscores" target="_blank" rel="noopener" style="display:block;margin-top:6px;color:#444;font-size:0.65em;text-align:center;text-decoration:none;">&#x1F4CA; Full Hiscores &#x2197;</a>
+      <a href="/rst/leaderboard" target="_blank" rel="noopener" style="display:block;margin-top:6px;color:#444;font-size:0.65em;text-align:center;text-decoration:none;">&#x1F4CA; Full Hiscores &#x2197;</a>
     </div>
     <!-- Online Players -->
     <div class="s-section">
@@ -776,6 +2356,111 @@ button.conn-btn:hover { background: #243300; }
     <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">Runescape Resource Terminal &mdash; BTC L1 F2P P2E &#x26CF;</p>
   </div>
 </div>
+<!-- Prices Modal -->
+<div class="htp-modal-bg" id="pricesModal">
+  <div class="prices-modal-box">
+    <button class="htp-close" onclick="document.getElementById('pricesModal').classList.remove('show')">&#x2715; CLOSE</button>
+    <h1>&#x1F4B0; GENERAL STORE PRICES</h1>
+    <div class="htp-sub">Base coin values &mdash; what the general store pays for your goods</div>
+    <div class="prices-grid">
+      <div class="prices-section">
+        <h3>&#x1FA93; Woodcutting</h3>
+        <table class="prices-tbl">
+          <tr><td>Logs</td><td>4 gp</td></tr>
+          <tr><td>Oak logs</td><td>20 gp</td></tr>
+          <tr><td>Willow logs</td><td>40 gp</td></tr>
+          <tr><td>Maple logs</td><td>80 gp</td></tr>
+          <tr><td>Yew logs</td><td>160 gp</td></tr>
+          <tr><td>Magic logs</td><td>320 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x26CF; Mining &mdash; Ores</h3>
+        <table class="prices-tbl">
+          <tr><td>Copper ore</td><td>3 gp</td></tr>
+          <tr><td>Tin ore</td><td>3 gp</td></tr>
+          <tr><td>Iron ore</td><td>17 gp</td></tr>
+          <tr><td>Coal</td><td>45 gp</td></tr>
+          <tr><td>Silver ore</td><td>75 gp</td></tr>
+          <tr><td>Gold ore</td><td>150 gp</td></tr>
+          <tr><td>Mithril ore</td><td>162 gp</td></tr>
+          <tr><td>Adamantite ore</td><td>400 gp</td></tr>
+          <tr><td>Runite ore</td><td>3,200 gp</td></tr>
+          <tr><td>Rune essence</td><td>4 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x1F525; Smelting &mdash; Bars</h3>
+        <table class="prices-tbl">
+          <tr><td>Bronze bar</td><td>8 gp</td></tr>
+          <tr><td>Iron bar</td><td>28 gp</td></tr>
+          <tr><td>Steel bar</td><td>100 gp</td></tr>
+          <tr><td>Silver bar</td><td>150 gp</td></tr>
+          <tr><td>Gold bar</td><td>300 gp</td></tr>
+          <tr><td>Mithril bar</td><td>300 gp</td></tr>
+          <tr><td>Adamantite bar</td><td>640 gp</td></tr>
+          <tr><td>Runite bar</td><td>5,000 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x1F3A3; Fishing &mdash; Raw</h3>
+        <table class="prices-tbl">
+          <tr><td>Raw shrimps</td><td>5 gp</td></tr>
+          <tr><td>Raw sardine</td><td>10 gp</td></tr>
+          <tr><td>Raw herring</td><td>15 gp</td></tr>
+          <tr><td>Raw anchovies</td><td>15 gp</td></tr>
+          <tr><td>Raw trout</td><td>20 gp</td></tr>
+          <tr><td>Raw cod</td><td>25 gp</td></tr>
+          <tr><td>Raw pike</td><td>30 gp</td></tr>
+          <tr><td>Raw salmon</td><td>50 gp</td></tr>
+          <tr><td>Raw tuna</td><td>100 gp</td></tr>
+          <tr><td>Raw lobster</td><td>150 gp</td></tr>
+          <tr><td>Raw swordfish</td><td>200 gp</td></tr>
+          <tr><td>Raw shark</td><td>300 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x1F356; Cooking &mdash; Cooked</h3>
+        <table class="prices-tbl">
+          <tr><td>Shrimps</td><td>5 gp</td></tr>
+          <tr><td>Sardine</td><td>10 gp</td></tr>
+          <tr><td>Herring</td><td>15 gp</td></tr>
+          <tr><td>Anchovies</td><td>15 gp</td></tr>
+          <tr><td>Trout</td><td>20 gp</td></tr>
+          <tr><td>Cod</td><td>25 gp</td></tr>
+          <tr><td>Salmon</td><td>50 gp</td></tr>
+          <tr><td>Tuna</td><td>100 gp</td></tr>
+          <tr><td>Lobster</td><td>150 gp</td></tr>
+          <tr><td>Swordfish</td><td>200 gp</td></tr>
+          <tr><td>Shark</td><td>300 gp</td></tr>
+          <tr><td>Cooked chicken</td><td>4 gp</td></tr>
+          <tr><td>Cooked meat</td><td>4 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x1F3F9; Fletching &mdash; Bows</h3>
+        <table class="prices-tbl">
+          <tr><td>Short bow</td><td>25 gp</td></tr>
+          <tr><td>Long bow</td><td>30 gp</td></tr>
+          <tr><td>Oak short bow</td><td>80 gp</td></tr>
+          <tr><td>Oak long bow</td><td>90 gp</td></tr>
+          <tr><td>Willow short bow</td><td>125 gp</td></tr>
+          <tr><td>Willow long bow</td><td>150 gp</td></tr>
+          <tr><td>Maple short bow</td><td>225 gp</td></tr>
+          <tr><td>Maple long bow</td><td>350 gp</td></tr>
+          <tr><td>Yew short bow</td><td>500 gp</td></tr>
+          <tr><td>Yew long bow</td><td>700 gp</td></tr>
+        </table>
+      </div>
+      <div class="prices-section">
+        <h3>&#x2728; Runes &mdash; Coming Soon</h3>
+        <table class="prices-tbl">
+          <tr><td colspan="2" style="color:#555;text-align:center;padding:10px 0;">Rune prices coming in a future update</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- Changelog Modal -->
 <div class="htp-modal-bg" id="changelogModal">
   <div class="htp-box">
@@ -912,6 +2597,7 @@ let mintState = 'idle'; // 'idle' | 'in_progress' | 'ready_to_sign'
 let sRSTBalance = 0;       // sRST balance
 let vaultRatio = 1.0;      // legacy — kept for unstake preview fallback
 let pendingWithdrawalRST = 0;  // legacy — kept for old staking contract compatibility
+let earnedRewardsRST = 0;      // cumulative sRST rewards claimed — loaded from server on connect
 let pendingRewardsRST = 0; // RST rewards claimable from MasterChef staking
 let lastClaimRewardsTime = 0; // cooldown — skip on-chain rewards fetch for 2 min after claiming
 let mempoolDisplay = 0;    // RST in mempool/claimable (updated by refreshBalance)
@@ -1034,6 +2720,9 @@ async function setupSession(u, w, showAlert) {
     localStorage.removeItem('rst_stake_wallet');
     localStorage.removeItem('rst_stake_amount');
     localStorage.removeItem('rst_stake_tier');
+    // Reset claim cooldown — don't bleed previous wallet's state into new session
+    lastClaimRewardsTime = 0;
+    pendingRewardsRST = 0;
   }
   document.getElementById('walletStatus').textContent = w.slice(0,12) + '...' + w.slice(-6);
   document.getElementById('walletStatus').className = 'wallet-status connected';
@@ -1043,6 +2732,7 @@ async function setupSession(u, w, showAlert) {
   startSSE(u);
   refreshBalance();
   refreshWalletBalances();
+  fetchEarnedRewards();
   checkStakeStatus();
   if (stakePhase === 'approval_pending') pollApprovalConfirmation();
   if (walletRefreshInterval) clearInterval(walletRefreshInterval);
@@ -1095,6 +2785,14 @@ function startSSE(u) {
 
 async function refreshBalance() {
   if (!username) return;
+  // If OP_WALLET switched accounts behind our back, disconnect cleanly
+  try {
+    const p = window.opnet || window.unisat;
+    if (p && wallet) {
+      const accs = await p.getAccounts?.();
+      if (accs && accs.length > 0 && accs[0] !== wallet) { disconnectWallet(); return; }
+    }
+  } catch {}
   try {
     const r = await fetch('/rst/balance?username=' + encodeURIComponent(username));
     const d = await r.json();
@@ -1347,6 +3045,29 @@ function addTxHistoryEntry(type, details, txid) {
   localStorage.setItem('rst_tx_history', JSON.stringify(history));
 }
 
+async function fetchEarnedRewards() {
+  if (!wallet) return;
+  try {
+    const r = await fetch('/rst/earned-rewards?wallet=' + encodeURIComponent(wallet));
+    const d = await r.json();
+    earnedRewardsRST = parseFloat(d.earned) || 0;
+    refreshEarnedRewards();
+  } catch {}
+}
+
+async function addEarnedRewards(amount) {
+  earnedRewardsRST += amount;
+  refreshEarnedRewards();
+  try {
+    await fetch('/rst/earned-rewards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet, amount }) });
+  } catch {}
+}
+
+function refreshEarnedRewards() {
+  var el = document.getElementById('statEarnedRewards');
+  if (el) el.textContent = earnedRewardsRST > 0 ? earnedRewardsRST.toFixed(4) + ' RST' : '0 RST';
+}
+
 function openTxHistoryModal() {
   var history = JSON.parse(localStorage.getItem('rst_tx_history') || '[]');
   var listEl = document.getElementById('txHistoryList');
@@ -1356,12 +3077,20 @@ function openTxHistoryModal() {
     listEl.innerHTML = history.map(function(e) {
       var d = new Date(e.ts);
       var ds = d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-      var txLink = e.txid ? '<div style="margin-top:2px;"><a href="https://testnet.opnet.org/tx/' + e.txid + '" target="_blank" style="color:#8888ff;font-size:0.65em;text-decoration:underline;">' + e.txid.slice(0,20) + '...</a></div>' : '';
-      return '<div style="padding:7px 0;border-bottom:1px solid #1a1600;">' +
+      var txid = e.txid || null;
+      var txShort = txid ? txid.slice(0,10) + '...' + txid.slice(-8) : null;
+      var opscanUrl = txid ? 'https://opscan.org/transactions/' + txid + '?network=op_testnet' : null;
+      var txLine = txid
+        ? '<div style="margin-top:3px;display:flex;align-items:center;gap:6px;">' +
+            '<span style="color:#555;font-size:0.62em;font-family:monospace;">' + txShort + '</span>' +
+            '<a href="' + opscanUrl + '" target="_blank" style="color:#8888ff;font-size:0.62em;text-decoration:none;border:1px solid #333;padding:1px 5px;border-radius:3px;">↗ opscan</a>' +
+          '</div>'
+        : '<div style="color:#444;font-size:0.62em;margin-top:3px;">no txid recorded</div>';
+      return '<div style="padding:8px 0;border-bottom:1px solid #1a1600;">' +
         '<div style="color:#f0c030;font-size:0.75em;font-weight:bold;">' + e.type + '</div>' +
-        '<div style="color:#aaa;font-size:0.7em;margin-top:1px;">' + e.details + '</div>' +
-        txLink +
-        '<div style="color:#555;font-size:0.63em;margin-top:2px;">' + ds + '</div>' +
+        '<div style="color:#ccc;font-size:0.72em;margin-top:2px;">' + e.details + '</div>' +
+        txLine +
+        '<div style="color:#555;font-size:0.62em;margin-top:3px;">' + ds + '</div>' +
         '</div>';
     }).join('');
   }
@@ -1616,15 +3345,17 @@ async function checkStakeStatus() {
       const rewardsRaw = typeof rewardsResult === 'string' ? rewardsResult : (rewardsResult?.result ?? rewardsResult?.data ?? '');
       const rewardsHex = decodeU256Hex(rewardsRaw);
       const rewardsWei = rewardsHex.length >= 64 ? BigInt('0x' + rewardsHex.slice(0, 64)) : 0n;
-      // Skip stale on-chain value for 2 min after claiming — TX not confirmed yet
-      if (Date.now() - lastClaimRewardsTime > 120000) {
+      // Skip stale on-chain value for 5 min after claiming — TX not confirmed yet
+      const claimCoolingDown = Date.now() - lastClaimRewardsTime < 300000;
+      if (!claimCoolingDown) {
         pendingRewardsRST = Number(rewardsWei) / 1e18;
       }
       const rewardsEl = document.getElementById('statPendingRewards');
-      if (rewardsEl) rewardsEl.textContent = pendingRewardsRST > 0 ? pendingRewardsRST.toFixed(6) + ' RST' : '0 RST';
+      if (rewardsEl) rewardsEl.textContent = claimCoolingDown ? '⏳ claiming...' : (pendingRewardsRST > 0 ? pendingRewardsRST.toFixed(6) + ' RST' : '0 RST');
+      refreshEarnedRewards();
       const claimRewardsBtn = document.getElementById('claimRewardsBtn');
       if (claimRewardsBtn) {
-        const shouldShow = sRSTBalance > 0 && pendingRewardsRST > 0.000001;
+        const shouldShow = sRSTBalance > 0 && pendingRewardsRST > 0.000001 && !claimCoolingDown;
         if (shouldShow) {
           claimRewardsBtn.textContent = '\uD83D\uDCB0 CLAIM REWARDS';
           claimRewardsBtn.disabled = false;
@@ -1808,18 +3539,27 @@ async function executeClaimRewards() {
     // claimRewards() = 0xc06cbdf1
     const calldata = hexToBytes('c06cbdf1');
     const params = { to: STAKING_CONTRACT, contract: STAKING_CONTRACT_PUBKEY, calldata, from: fromWallet, utxos, feeRate: 10, priorityFee: 0n, gasSatFee: 20000n, network, linkMLDSAPublicKeyToAddress: true, revealMLDSAPublicKey: false };
+    var claimTxid = null;
     if (typeof web3.signInteraction === 'function') {
       const signed = await web3.signInteraction(params);
       if (signed.fundingTransaction) await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_sendRawTransaction', params: [signed.fundingTransaction, false] }) });
-      await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_sendRawTransaction', params: [signed.interactionTransaction, false] }) });
-    } else { await web3.signAndBroadcastInteraction(params); }
-    addTxHistoryEntry('\uD83D\uDCB0 CLAIMED REWARDS', pendingRewardsRST.toFixed(4) + ' RST staking rewards claimed');
+      const interactionRes = await fetch('https://testnet.opnet.org/api/v1/json-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_sendRawTransaction', params: [signed.interactionTransaction, false] }) });
+      try { const interactionJson = await interactionRes.json(); claimTxid = interactionJson?.result || null; } catch {}
+    } else {
+      const broadcastResult = await web3.signAndBroadcastInteraction(params);
+      claimTxid = broadcastResult?.txid || broadcastResult?.interactionAddress || null;
+    }
+    var claimedAmount = pendingRewardsRST;
+    addTxHistoryEntry('\uD83D\uDCB0 CLAIMED REWARDS', claimedAmount.toFixed(4) + ' RST staking rewards claimed', claimTxid);
+    addEarnedRewards(claimedAmount);
     pendingRewardsRST = 0;
     lastClaimRewardsTime = Date.now();
+    refreshEarnedRewards();
     btn.textContent = '\u2705 Claimed!';
+    btn.disabled = true;
     btn.style.display = 'none';
     const rewardsEl = document.getElementById('statPendingRewards');
-    if (rewardsEl) rewardsEl.textContent = '0 RST';
+    if (rewardsEl) rewardsEl.textContent = '\u23F3 claiming...';
     setTimeout(() => refreshBalance(), 4000);
   } catch(e) {
     btn.textContent = '\uD83D\uDCB0 CLAIM REWARDS';
@@ -1964,7 +3704,8 @@ async function openClaimModal() {
     const r = await fetch('/rst/balance?username=' + encodeURIComponent(username));
     const d = await r.json();
     const gp = d.pending || 0;
-    if (gp < 10) {
+    const gpThreshold = d.hasClaimedBefore ? 10000 : 1000;
+    if (gp < gpThreshold) {
       // No server-side pending — check if there's already-granted RST on-chain waiting to be claimed
       const claimable = await fetchClaimableOf();
       if (claimable > 0n) {
@@ -1988,7 +3729,7 @@ async function openClaimModal() {
         if (!claimPollInterval && mldsaHash) pollClaimableUntilReady(mldsaHash);
         alert('Your RST is on the way! Confirming on-chain (~1 min). The sign window will open automatically.');
       } else {
-        alert('No RST pending yet. Sell resources to the RST merchant first!');
+        alert('Keep earning! Need ' + gpThreshold.toLocaleString() + ' GP to claim RST (' + gp.toLocaleString() + '/' + gpThreshold.toLocaleString() + ' GP).');
       }
       return;
     }
@@ -2020,7 +3761,7 @@ function dismissModal() {
 function disconnectWallet() {
   if (es) { es.close(); es = null; }
   if (walletRefreshInterval) { clearInterval(walletRefreshInterval); walletRefreshInterval = null; }
-  username = null; wallet = null; mintData = null; mldsaHash = null; mintState = 'idle';
+  username = null; wallet = null; mintData = null; mldsaHash = null; mintState = 'idle'; earnedRewardsRST = 0;
   localStorage.removeItem('rst_username');
   document.getElementById('walletStatus').textContent = 'No wallet connected — connect in the sidebar';
   document.getElementById('walletStatus').className = 'wallet-status';
@@ -2087,8 +3828,12 @@ async function executeMint() {
     let claimTxid = null;
     if (typeof web3.signAndBroadcastInteraction === 'function') {
       const res = await web3.signAndBroadcastInteraction(params);
-      console.log('[RST] signAndBroadcastInteraction result:', res);
-      claimTxid = res?.txid || res?.transactionId || res?.result || null;
+      console.log('[RST] signAndBroadcastInteraction result:', JSON.stringify(res));
+      claimTxid = res?.txid || res?.transactionId || res?.result
+        || res?.interactionTransactionId || res?.broadcastResult
+        || res?.hash || res?.id
+        || (res && typeof res === 'string' ? res : null)
+        || null;
     } else {
       const signed = await web3.signInteraction(params);
       console.log('[RST] signInteraction result:', signed);

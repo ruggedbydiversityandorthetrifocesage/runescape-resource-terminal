@@ -38,12 +38,12 @@ const RST_MINT_ABI = [
 // Serial wallet queue — ALL server wallet TXs go through here.
 // The server wallet has one UTXO at a time; concurrent TXs cause double-spend contention
 // (only 1 TX wins, rest dropped). This queue guarantees each TX is fully broadcast
-// before the next one starts — covering grantClaim, addRewards, and any future calls.
-type WalletJob = { label: string; run: () => Promise<boolean>; resolve: (v: boolean) => void };
-const walletQueue: WalletJob[] = [];
+// before the next one starts — covering grantClaim, addRewards, banklog mint/stamp, etc.
+export type WalletJob = { label: string; run: () => Promise<boolean>; resolve: (v: boolean) => void };
+export const walletQueue: WalletJob[] = [];
 let walletQueueRunning = false;
 
-async function runWalletQueue(): Promise<void> {
+export async function runWalletQueue(): Promise<void> {
     if (walletQueueRunning) return;
     walletQueueRunning = true;
     while (walletQueue.length > 0) {
@@ -62,7 +62,7 @@ let _provider: JSONRpcProvider | null = null;
 
 function getProvider(): JSONRpcProvider {
     if (!_provider) {
-        _provider = new JSONRpcProvider({ url: 'https://testnet.opnet.org', network: networks.opnetTestnet });
+        _provider = new JSONRpcProvider('https://testnet.opnet.org', networks.opnetTestnet);
     }
     return _provider;
 }
