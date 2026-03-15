@@ -1,3 +1,4 @@
+[if_button,magic:home_teleport] @home_teleport;
 [if_button,magic:varrock_teleport] @magic_teleport(^varrock_teleport);
 [if_button,magic:lumbridge_teleport] @magic_teleport(^lumbridge_teleport);
 [if_button,magic:falador_teleport] @magic_teleport(^falador_teleport);
@@ -92,3 +93,22 @@ if (~in_duel_arena($coord) = true) {
     return(false);
 }
 return(true);
+
+[label,home_teleport]
+if_close;
+if (p_finduid(uid) = true) {
+    if (~wilderness_level(coord) > 20) {
+        mes("A mysterious force blocks your teleport spell!");
+        mes("You can't use this teleport after level 20 wilderness.");
+        return;
+    }
+    if (~pre_tele_checks(coord) = false) {
+        return;
+    }
+    if (afk_event = ^true) {
+        ~macro_event_general_spawn(~macro_event_set_random);
+        return;
+    }
+    %hometele = calc(%hometele + 1);
+    ~player_teleport_normal(map_findsquare(0_50_50_22_24, 0, 2, ^map_findsquare_lineofwalk));
+}

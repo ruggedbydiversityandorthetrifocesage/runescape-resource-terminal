@@ -431,11 +431,17 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                 // Accumulate 1% fee — flushed by 30-min interval, not here
                 pendingRewardGP += feeGP;
                 // Stamp on-chain Bank Log score at each conversion (event-driven, active players only).
-                // Score = totalLevel * 10 + rstEarned * 5 — captured at moment of conversion.
+                // Passes per-skill XP for on-chain audit trail: wcXp/25 ≈ logs, mineXp/17.5 ≈ ores.
+                // player.stats[i] stores XP × 10 internally — divide by 10 for real XP.
                 const totalLevel = player.baseLevels.reduce((sum: number, lv: number) => sum + lv, 0);
+                const wcXp       = Math.floor((player.stats[8]  ?? 0) / 10); // WOODCUTTING
+                const fishXp     = Math.floor((player.stats[10] ?? 0) / 10); // FISHING
+                const mineXp     = Math.floor((player.stats[14] ?? 0) / 10); // MINING
                 const totalGrantedGP = grantedGP.get(player.username) ?? 0;
-                const rstEarned = totalGrantedGP / RST_GP_PER_TOKEN;
-                stampBankLog(player.username, totalLevel, rstEarned);
+                const rstEarned  = totalGrantedGP / RST_GP_PER_TOKEN;
+                // resourcesSold approximated from total GP converted ÷ avg resource value (100 GP)
+                const resourcesSold = Math.floor(totalGrantedGP / 100);
+                stampBankLog(player.username, totalLevel, wcXp, mineXp, fishXp, rstEarned, resourcesSold);
             }
             // Whether grant succeeded or failed, push mint_ready so the player can claim from browser
             if (ctrl) {

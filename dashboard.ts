@@ -79,19 +79,6 @@ export function initPathfinding(): void {
         }
     }
 
-    // Pre-allocate Rune Essence mine zones (x ~2875-2950, z ~4800-4870).
-    // The essence mine uses a separate coordinate region outside the mainland
-    // range — without this, pathfinding returns "Source zone not allocated"
-    // for any position inside the mine.
-    for (let x = 2872; x <= 2952; x += 8) {
-        for (let z = 4800; z <= 4872; z += 8) {
-            if (!rsmod.isZoneAllocated(x, z, 0)) {
-                rsmod.allocateIfAbsent(x, z, 0);
-                undergroundZones++;
-            }
-        }
-    }
-
     // Set collision flags for tiles that have them (includes wall flags)
     for (const [level, x, z, flags] of data.tiles) {
         rsmod.__set(x, z, level, flags);

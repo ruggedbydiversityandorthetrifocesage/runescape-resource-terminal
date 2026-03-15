@@ -34,6 +34,7 @@ export function checkPlayerBoundary(player: NetworkPlayer): void {
     const { x, z } = player;
 
     if (z >= 6400) return; // underground — surface zone already enforced at entry
+    if (x >= 2875 && x <= 2950 && z >= 4800 && z <= 4870) return; // Rune Essence mine — open to all tiers
 
     if (tier === 1) {
         const inP2 = x >= P2_ZONE.minX && x <= P2_ZONE.maxX && z >= P2_ZONE.minZ && z <= P2_ZONE.maxZ;

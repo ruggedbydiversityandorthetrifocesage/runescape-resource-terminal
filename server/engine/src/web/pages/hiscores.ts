@@ -1,5 +1,6 @@
 import { db } from '#/db/query.js';
 import Environment from '#/util/Environment.js';
+import { getLeaderboard } from '#/engine/pill/PillMerchant.js';
 import { tryParseInt } from '#/util/TryParse.js';
 import { escapeHtml, SKILL_NAMES, ENABLED_SKILLS } from '../utils.js';
 
@@ -47,6 +48,17 @@ function formatPlaytime(ticks: number): string {
         return `${hours}h ${minutes}m`;
     }
     return `${minutes}m`;
+}
+
+// Format XP with K/M suffix
+function formatXP(xp: number): string {
+    if (xp >= 1_000_000) {
+        return `${(xp / 1_000_000).toFixed(1)}M`;
+    }
+    if (xp >= 10_000) {
+        return `${Math.floor(xp / 1_000)}K`;
+    }
+    return xp.toLocaleString();
 }
 
 // Player profile page handler
@@ -118,6 +130,11 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
         .where('profile', '=', profile)
         .execute();
 
+    // RST earned by this player
+    const leaderboard = getLeaderboard();
+    const playerRstEntry = leaderboard.find(e => e.username.toLowerCase() === account.username.toLowerCase());
+    const playerRstEarned = playerRstEntry?.rst ?? 0;
+
     // Build skill rows with ranks
     const skillRows: string[] = [];
 
@@ -127,7 +144,7 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
             <td><a href="/hiscores?category=0&profile=${profile}" class="c">Overall</a></td>
             <td align="right">${overallRank}</td>
             <td align="right">${overallStats ? overallStats.level.toLocaleString() : '-'}</td>
-            <td align="right">${overallStats ? formatPlaytime(overallStats.playtime) : '-'}</td>
+            <td align="right">${overallStats ? formatXP(Number(overallStats.value)) : '-'}</td>
         </tr>
     `);
 
@@ -164,7 +181,7 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
                 <td><a href="/hiscores?category=${skill.id + 1}&profile=${profile}" class="c"><img src="/img/skill/${iconFile}" width="16" height="16" style="vertical-align:middle;margin-right:4px">${skill.name}</a></td>
                 <td align="right">${rank}</td>
                 <td align="right">${stat ? stat.level.toLocaleString() : '-'}</td>
-                <td align="right">${stat ? formatPlaytime(stat.playtime) : '-'}</td>
+                <td align="right">${stat ? formatXP(Number(stat.value)) : '-'}</td>
             </tr>
         `);
     }
@@ -228,10 +245,11 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
                                     <td><b>Skill</b></td>
                                     <td align="right"><b>Rank</b></td>
                                     <td align="right"><b>Level</b></td>
-                                    <td align="right"><b>Time</b></td>
+                                    <td align="right"><b>XP</b></td>
                                 </tr>
                                 ${skillRows.join('')}
                             </table>
+                            ${playerRstEarned > 0 ? `<br><center><span style="color:#f0c030;font-size:12px">&#x20BF; RST Earned: <b>${playerRstEarned.toLocaleString()}</b></span></center>` : ''}
                         </td>
                     </tr>
                 </table>
@@ -272,16 +290,16 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
     const playerSearch = url.searchParams.get('player')?.toLowerCase().trim() || '';
     const rankSearch = tryParseInt(url.searchParams.get('rank'), -1);
 
-    let rows: { rank: number; username: string; level: number; playtime: number }[] = [];
+    let rows: { rank: number; username: string; level: number; value: number; playtime: number }[] = [];
     let selectedSkill = 'Overall';
-    let searchedPlayer: { rank: number; username: string; level: number; playtime: number } | null = null;
+    let searchedPlayer: { rank: number; username: string; level: number; value: number; playtime: number } | null = null;
 
     if (category === -1 || category === 0) {
         // Overall - query hiscore_large
         let query = db
             .selectFrom('hiscore_large')
             .innerJoin('account', 'account.id', 'hiscore_large.account_id')
-            .select(['account.username', 'hiscore_large.level', 'hiscore_large.playtime'])
+            .select(['account.username', 'hiscore_large.level', 'hiscore_large.value', 'hiscore_large.playtime'])
             .where('hiscore_large.type', '=', 0)
             .where('hiscore_large.profile', '=', profile)
             .where('account.staffmodlevel', '<=', 1)
@@ -299,6 +317,7 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
             rank: startRank + i + 1,
             username: r.username,
             level: r.level,
+            value: Number(r.value),
             playtime: r.playtime
         }));
 
@@ -306,7 +325,7 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
             const idx = allResults.findIndex(r => r.username.toLowerCase() === playerSearch);
             if (idx !== -1) {
                 const r = allResults[idx];
-                searchedPlayer = { rank: idx + 1, username: r.username, level: r.level, playtime: r.playtime };
+                searchedPlayer = { rank: idx + 1, username: r.username, level: r.level, value: Number(r.value), playtime: r.playtime };
             }
         }
         selectedSkill = 'Overall';
@@ -318,7 +337,7 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
             let query = db
                 .selectFrom('hiscore')
                 .innerJoin('account', 'account.id', 'hiscore.account_id')
-                .select(['account.username', 'hiscore.level', 'hiscore.playtime'])
+                .select(['account.username', 'hiscore.level', 'hiscore.value', 'hiscore.playtime'])
                 .where('hiscore.type', '=', category)
                 .where('hiscore.profile', '=', profile)
                 .where('account.staffmodlevel', '<=', 1)
@@ -335,6 +354,7 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
                 rank: startRank + i + 1,
                 username: r.username,
                 level: r.level,
+                value: Number(r.value),
                 playtime: r.playtime
             }));
 
@@ -342,7 +362,7 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
                 const idx = allResults.findIndex(r => r.username.toLowerCase() === playerSearch);
                 if (idx !== -1) {
                     const r = allResults[idx];
-                    searchedPlayer = { rank: idx + 1, username: r.username, level: r.level, playtime: r.playtime };
+                    searchedPlayer = { rank: idx + 1, username: r.username, level: r.level, value: Number(r.value), playtime: r.playtime };
                 }
             }
             selectedSkill = skillName;
@@ -363,13 +383,19 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
     }).join('\n')
         + `\n<tr><td>&nbsp;</td></tr>\n<tr><td><a href="/hiscores/outfit?profile=${profile}" class="c text-orange">Equipment</a></td></tr>`;
 
+    // Build RST map for Overall leaderboard
+    const leaderboardRst = getLeaderboard();
+    const rstMap = new Map(leaderboardRst.map(e => [e.username.toLowerCase(), e.rst]));
+    const isOverall = category === -1 || category === 0;
+
     // Build data rows
     const rankCol = rows.map(r => `${r.rank}<br>`).join('\n');
     const nameCol = rows.map(r =>
         `<a href="/hiscores/player/${encodeURIComponent(r.username)}?profile=${profile}" class="c">${escapeHtml(r.username)}</a><br>`
     ).join('\n');
     const levelCol = rows.map(r => `${r.level.toLocaleString()}<br>`).join('\n');
-    const timeCol = rows.map(r => `${formatPlaytime(r.playtime)}<br>`).join('\n');
+    const xpCol = rows.map(r => `${formatXP(r.value)}<br>`).join('\n');
+    const rstCol = isOverall ? rows.map(r => `${(rstMap.get(r.username.toLowerCase()) ?? 0).toLocaleString()}<br>`).join('\n') : '';
 
     const html = `<!DOCTYPE html>
 <html>
@@ -461,10 +487,10 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
                             </center>
                         </td>
 
-                        <td width="290" valign="top">
+                        <td width="${isOverall ? '380' : '290'}" valign="top">
                             <center>
                                 <b>${selectedSkill} Hiscores</b><br>
-                                <table width="300" height="400" bgcolor="black" cellpadding="4">
+                                <table width="${isOverall ? '400' : '300'}" height="400" bgcolor="black" cellpadding="4">
                                     <tr>
                                         <td class="e" valign="top">
                                             ${rows.length > 0 ? `<table>
@@ -485,9 +511,14 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
                                                     </td>
                                                     <td>&nbsp;</td>
                                                     <td align="right" valign="top">
-                                                        <b>Time</b><br>
-                                                        ${timeCol}
+                                                        <b>XP</b><br>
+                                                        ${xpCol}
                                                     </td>
+                                                    ${isOverall ? `<td>&nbsp;</td>
+                                                    <td align="right" valign="top" style="color:#f0c030">
+                                                        <b>RST</b><br>
+                                                        ${rstCol}
+                                                    </td>` : ''}
                                                 </tr>
                                             </table>` : '<center><br>No players found</center>'}
                                         </td>
@@ -553,7 +584,8 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
                                 Rank: ${searchedPlayer.rank} |
                                 <a href="/hiscores/player/${encodeURIComponent(searchedPlayer.username)}?profile=${profile}" class="c">${escapeHtml(searchedPlayer.username)}</a> |
                                 Level: ${searchedPlayer.level.toLocaleString()} |
-                                Time: ${formatPlaytime(searchedPlayer.playtime)}
+                                XP: ${formatXP(searchedPlayer.value)}
+                                ${isOverall ? `| <span style="color:#f0c030">RST: ${(rstMap.get(searchedPlayer.username.toLowerCase()) ?? 0).toLocaleString()}</span>` : ''}
                             </center>
                         </td>
                     </tr>

@@ -6406,7 +6406,7 @@ export class Client extends GameShell {
                 this.fontPlain11?.drawStringTaggableCenter(w / 2, extraY, this.onDemand.message, 0x75a9a9, true);
             }
 
-            this.fontBold12?.drawStringTaggableCenter(w / 2, y, 'Welcome to Runescape Resource Terminal', Colors.YELLOW, true);
+            this.fontBold12?.drawStringTaggableCenter(w / 2, y, 'Welcome to RuneScape', Colors.YELLOW, true);
             y += 30;
 
             let x = ((w / 2) | 0) - 80;
@@ -6449,16 +6449,16 @@ export class Client extends GameShell {
             this.fontBold12?.drawStringTaggableCenter(x, y, 'Create a free account', Colors.YELLOW, true);
 
             y = ((h / 2) | 0) - 35;
-            this.fontBold12?.drawStringTaggableCenter(x, y, 'To create a new user, simply type in', Colors.WHITE, true);
+            this.fontBold12?.drawStringTaggableCenter(x, y, 'To create a new account you need to', Colors.WHITE, true);
             y += 15;
 
-            this.fontBold12?.drawStringTaggableCenter(x, y, 'the username on the right, connect your', Colors.WHITE, true);
+            this.fontBold12?.drawStringTaggableCenter(x, y, 'go back to the main RuneScape webpage', Colors.WHITE, true);
             y += 15;
 
-            this.fontBold12?.drawStringTaggableCenter(x, y, 'OPWALLET to the desired address and', Colors.WHITE, true);
+            this.fontBold12?.drawStringTaggableCenter(x, y, "and choose the red 'create account'", Colors.WHITE, true);
             y += 15;
 
-            this.fontBold12?.drawStringTaggableCenter(x, y, 'your username is linked to that address exclusively.', Colors.WHITE, true);
+            this.fontBold12?.drawStringTaggableCenter(x, y, 'button at the top right of that page.', Colors.WHITE, true);
             y += 15;
 
             x = (w / 2) | 0;

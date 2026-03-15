@@ -6,7 +6,8 @@ import { EcKeyPair, Wallet, Address } from '@btc-vision/transaction';
 import { QuantumBIP32Factory, MLDSASecurityLevel } from '@btc-vision/bip32';
 import { walletQueue, runWalletQueue } from './RSTMinter.js';
 
-export const BANKLOG_CONTRACT_ADDR = 'opt1sqpkl99lh5fuaqdxx9zy4y9urcnfjk6q0wshepnzh';
+// V2 BankLog — deployed 2026-03-14 with one-per-wallet guard + audit fields
+export const BANKLOG_CONTRACT_ADDR = 'opt1sqqm4lqy8f38uc47m9xp5lnmjjxnw4mgm3ggjqrxz';
 
 const networks = {
     ..._networks,
@@ -32,6 +33,8 @@ const BANKLOG_MINT_ABI = [
     },
 ];
 
+// V2: updateScore now includes per-skill XP + resourcesSold for on-chain audit trail.
+// Anyone can verify: woodcuttingXp / 25 ≈ logs chopped, miningXp / 17.5 ≈ ores mined.
 const BANKLOG_UPDATE_SCORE_ABI = [
     {
         name: 'updateScore',
@@ -39,8 +42,13 @@ const BANKLOG_UPDATE_SCORE_ABI = [
         payable: false,
         onlyOwner: false,
         inputs: [
-            { name: 'tokenId', type: 'UINT256' },
-            { name: 'score', type: 'UINT256' },
+            { name: 'tokenId',       type: 'UINT256' },
+            { name: 'score',         type: 'UINT256' },
+            { name: 'woodcuttingXp', type: 'UINT256' },
+            { name: 'miningXp',      type: 'UINT256' },
+            { name: 'fishingXp',     type: 'UINT256' },
+            { name: 'rstEarned',     type: 'UINT256' },
+            { name: 'resourcesSold', type: 'UINT256' },
         ],
         outputs: [{ name: 'success', type: 'BOOL' }],
     },
@@ -136,7 +144,7 @@ async function _mintBankLog(username: string, mldsaPublicKey: string): Promise<b
         });
         if (!receipt || 'error' in receipt) throw new Error('mint TX rejected: ' + JSON.stringify(receipt));
 
-        const txid = (receipt as any).txid ?? (receipt as any).hash ?? (receipt as any).id ?? 'unknown';
+        const txid = (receipt as any).txid ?? (receipt as any).hash ?? (receipt as any).id ?? JSON.stringify(receipt).slice(0, 200);
         console.log('[BankLog] ✅ Minted tokenId=' + tokenId + ' for ' + username + ' txid=' + txid);
 
         reg.nextTokenId = tokenId + 1;
@@ -185,8 +193,16 @@ export function mintBankLog(username: string, mldsaPublicKey: string): Promise<b
 
 // ─── Stamp score ─────────────────────────────────────────────────────────────
 
-async function _stampBankLog(username: string, tokenId: number, score: number): Promise<boolean> {
-    if (BANKLOG_CONTRACT_ADDR === 'DEPLOY_PENDING') return false;
+interface StampData {
+    score: number;
+    woodcuttingXp: number;
+    miningXp: number;
+    fishingXp: number;
+    rstEarned: number;
+    resourcesSold: number;
+}
+
+async function _stampBankLog(username: string, tokenId: number, d: StampData): Promise<boolean> {
     const wif = process.env.RST_MINTER_WIF;
     if (!wif) return false;
 
@@ -197,11 +213,16 @@ async function _stampBankLog(username: string, tokenId: number, score: number): 
 
         const contract = getContract(BANKLOG_CONTRACT_ADDR, BANKLOG_UPDATE_SCORE_ABI as any, provider, networks.opnetTestnet, callerAddr);
 
-        const tokenIdBig = BigInt(tokenId);
-        const scoreBig = BigInt(score);
-
-        console.log('[BankLog] Stamping score=' + score + ' for ' + username + ' tokenId=' + tokenId);
-        const sim = await (contract as any).updateScore(tokenIdBig, scoreBig);
+        console.log('[BankLog] Stamping score=' + d.score + ' wc=' + d.woodcuttingXp + ' mine=' + d.miningXp + ' fish=' + d.fishingXp + ' rst=' + d.rstEarned + ' res=' + d.resourcesSold + ' for ' + username + ' tokenId=' + tokenId);
+        const sim = await (contract as any).updateScore(
+            BigInt(tokenId),
+            BigInt(d.score),
+            BigInt(d.woodcuttingXp),
+            BigInt(d.miningXp),
+            BigInt(d.fishingXp),
+            BigInt(Math.floor(d.rstEarned * 1e18)), // RST as wei (18 decimals)
+            BigInt(d.resourcesSold),
+        );
         if ('error' in sim) throw new Error('updateScore simulation failed: ' + (sim as any).error);
 
         const receipt = await sim.sendTransaction({
@@ -214,8 +235,8 @@ async function _stampBankLog(username: string, tokenId: number, score: number): 
         });
         if (!receipt || 'error' in receipt) throw new Error('updateScore TX rejected: ' + JSON.stringify(receipt));
 
-        const txid = (receipt as any).txid ?? (receipt as any).hash ?? (receipt as any).id ?? 'unknown';
-        console.log('[BankLog] ✅ Score stamped on-chain for ' + username + ' score=' + score + ' txid=' + txid);
+        const txid = (receipt as any).txid ?? (receipt as any).hash ?? (receipt as any).id ?? JSON.stringify(receipt).slice(0, 120);
+        console.log('[BankLog] ✅ Score stamped on-chain for ' + username + ' score=' + d.score + ' txid=' + txid);
         return true;
     } catch (e: unknown) {
         console.error('[BankLog] ❌ stampBankLog failed for ' + username + ':', e instanceof Error ? e.message : String(e));
@@ -225,17 +246,12 @@ async function _stampBankLog(username: string, tokenId: number, score: number): 
 
 /**
  * Stamp an on-chain score snapshot when a player converts at the general store.
- * Score formula: totalLevel * 10 + Math.floor(rstEarned * 5)
+ * Writes score + per-skill XP + resourcesSold — full audit trail on Bitcoin.
  *
  * Event-driven: only fires for active converters, not all players.
- * If the player has no Bank Log yet (shouldn't happen after wallet connect mint),
- * silently skips — the next conversion after minting will stamp.
- *
  * Runs through the shared walletQueue after the preceding grantClaim TX.
  */
-export function stampBankLog(username: string, totalLevel: number, rstEarned: number): void {
-    if (BANKLOG_CONTRACT_ADDR === 'DEPLOY_PENDING') return;
-
+export function stampBankLog(username: string, totalLevel: number, wcXp: number, mineXp: number, fishXp: number, rstEarned: number, resourcesSold: number): void {
     const key = username.toLowerCase();
     const reg = loadRegistry();
     const tokenId = reg.byUsername[key];
@@ -245,9 +261,10 @@ export function stampBankLog(username: string, totalLevel: number, rstEarned: nu
     }
 
     const score = totalLevel * 10 + Math.floor(rstEarned * 5);
+    const stampData: StampData = { score, woodcuttingXp: wcXp, miningXp: mineXp, fishingXp: fishXp, rstEarned, resourcesSold };
     walletQueue.push({
         label: 'banklog:stamp:' + username + ':score=' + score,
-        run: () => _stampBankLog(username, tokenId, score),
+        run: () => _stampBankLog(username, tokenId, stampData),
         resolve: () => {},
     });
     console.log('[BankLog] Queued score stamp for ' + username + ' score=' + score + ' (queue depth: ' + walletQueue.length + ')');

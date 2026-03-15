@@ -164,20 +164,27 @@ The skill mirrors the joke — every rune ever made on Bitcoin was pretend until
 
 ## Near-Term Priority Order
 
-1. ✅ Difficulty index UI (done)
-2. ✅ World boundary gating by RST balance (done)
-3. 🔲 New characters spawn with Iron Axe instead of Bronze Axe
-4. 🔲 Auto-complete Rune Mysteries Quest for all players on login
-4. 🔲 Confirm Phase 2 boundary coordinates match red-outline map
-5. 🔲 Add fishing skill + resources (Phase 2 content)
-6. 🔲 Add smelting/smithing skill + resources (Phase 2 content)
-7. 🔲 Apply Tier 2 GP multipliers (smelting 3x, cooking 3x, runecrafting 2x)
-8. 🔲 Block selling during 3-min cooldown (merchant rejects)
-9. 🔲 Boat mechanic (Port Sarim → Karamja)
-10. 🔲 GP claim thresholds (100 → 1,000 → 10,000)
-11. 🔲 Contract v2 redeploy (1% fee, 50/50 burn/treasury)
-12. 🔲 Bank Log NFT system
-13. 🔲 Runecrafting skill (Rune Mysteries auto-completed → essence mine → altars → GP)
-14. 🔲 Duke Horacio shop (post-quest unlock: tiaras, talismans, pouches)
-15. 🔲 Wallet TX history panel (localStorage — stake, unstake, claim events)
-16. 🔲 V3 crafting skills (Herblore, Crafting, Farming)
+1. ✅ Difficulty index UI
+2. ✅ World boundary gating by RST balance
+3. ✅ New characters spawn with Iron Axe (id 1349)
+4. ✅ Phase 2 boundary coordinates (Falador/Port Sarim/Asgarnia/Wilderness confirmed)
+5. ✅ Fishing skill + resources (shrimp→shark GP values in PillMerchant)
+6. ✅ Fishing Supplies NPC (sells gear at Bob's shop, 3231,3207)
+7. ✅ Smelting/Smithing GP rewards (bars bronze→runite, 3x ore value multiplier)
+8. ✅ Tier 2 smelting multiplier (3x — bars worth 3x raw ores)
+9. ✅ Hiscores — XP + RST Earned columns
+10. ✅ RST price ticker widget (live MotoSwap LP data)
+11. ✅ Lumbridge fountain courtyard (Satoshi + 5 bank booths + Broker)
+12. ✅ Home teleport — fixed, enlarged, always lit, points to fountain
+13. ✅ Auto-complete Rune Mysteries Quest on login
+14. ✅ Boat mechanic (Port Sarim → Karamja)
+15. 🔲 Tier 2 GP multipliers for cooking + runecrafting (smelting done, these two missing)
+16. 🔲 Block selling during 3-min cooldown (cooldown exists but doesn't reject merchant interaction yet)
+17. 🔲 GP claim thresholds (currently 10 GP min — needs 100 → 1,000 → 10,000 tiers)
+18. 🔲 Contract v2 redeploy (1% fee, 50/50 burn/treasury)
+19. 🔲 RST Shop purchase fees → sRST staking pool (instead of burn)
+20. 🔲 Bank Log NFT system
+21. 🔲 Runecrafting skill (essence mine → altars → GP)
+22. 🔲 Duke Horacio shop (tiaras, talismans, pouches)
+23. 🔲 Wallet TX history panel (stake, unstake, claim events)
+24. 🔲 V3 crafting skills (Herblore, Crafting, Farming)

@@ -1,9 +1,5 @@
 [label,teleport_to_essence_mine](coord $tele_back_coord)
-if(%runemysteries < ^runemysteries_complete) {
-    // https://www.youtube.com/watch?v=E6fjnTE5vl8&t=189s
-    mes("You need to have completed the Rune Mysteries Quest to use this feature.");
-    return;
-}
+// Quest requirement removed — all players have access
 if_close;
 %exit_essence_mine_coord = $tele_back_coord;
 // this is lowercase

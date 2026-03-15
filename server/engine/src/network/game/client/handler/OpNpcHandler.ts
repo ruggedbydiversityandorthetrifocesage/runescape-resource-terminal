@@ -9,7 +9,7 @@ import ClientGameMessageHandler from '#/network/game/client/ClientGameMessageHan
 import OpNpc from '#/network/game/client/model/OpNpc.js';
 import UnsetMapFlag from '#/network/game/server/model/UnsetMapFlag.js';
 import { PILL_MERCHANT_NPC_IDS, handlePillMerchant } from '#/engine/pill/PillMerchant.js';
-import { RST_SHOP_NPC_IDS, handleRSTShop } from '#/engine/pill/RSTShop.js';
+import { RST_SHOP_NPC_IDS, handleRSTShop, BOB_SHOP_NPC_IDS, handleBobShop, fishingSuppliesNid, handleFishingShop } from '#/engine/pill/RSTShop.js';
 
 export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
     handle(message: OpNpc, player: NetworkPlayer): boolean {
@@ -33,6 +33,12 @@ export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
             return false;
         }
 
+        // NID-based check — must come before type-based checks
+        if (fishingSuppliesNid !== -1 && npc.nid === fishingSuppliesNid) {
+            handleFishingShop(player, npc);
+            return true;
+        }
+
         if (PILL_MERCHANT_NPC_IDS.has(npc.type)) {
             handlePillMerchant(player, npc);
             return true;
@@ -43,7 +49,7 @@ export default class OpNpcHandler extends ClientGameMessageHandler<OpNpc> {
             return true;
         }
 
-        const npcType = NpcType.get(npc.type);
+const npcType = NpcType.get(npc.type);
         if (!npcType.op || !npcType.op[message.op - 1]) {
             player.write(new UnsetMapFlag());
             player.clearPendingAction();

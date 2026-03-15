@@ -1,1 +1,13 @@
-{"nextTokenId":1,"byTokenId":{},"byUsername":{}}
+{
+  "nextTokenId": 2,
+  "byTokenId": {
+    "1": {
+      "username": "mama",
+      "mldsaHash": "187663c04ab5d79983f48f052b3aabfbaa6bb1618891832f3f7d96e3bf60ede3",
+      "mintedAt": 1773535911665
+    }
+  },
+  "byUsername": {
+    "mama": 1
+  }
+}

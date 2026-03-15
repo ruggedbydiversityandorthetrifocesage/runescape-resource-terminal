@@ -62,7 +62,7 @@ import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import { WorldStat } from '#/engine/WorldStat.js';
 import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, tutorialRemindTick, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, TUTORIAL_BANK_X, TUTORIAL_BANK_Z } from '#/engine/pill/TutorialTracker.js';
 import { awardCowKillGP, COW_NPC_IDS } from '#/engine/pill/PillMerchant.js';
-import { broadcastRSTShop, setRSTBrokerNpc } from '#/engine/pill/RSTShop.js';
+import { broadcastRSTShop, setRSTBrokerNpc, setFishingSuppliesNid } from '#/engine/pill/RSTShop.js';
 import Zone from '#/engine/zone/Zone.js';
 import Isaac from '#/io/Isaac.js';
 import Packet from '#/io/Packet.js';
@@ -127,6 +127,7 @@ class World {
     private static readonly AFK_EVENTRATE: number = 500; // 5m
     private static readonly PLAYER_SAVERATE: number = 1500; // 15m
     private static readonly PLAYER_COORDLOGRATE: number = 50; // 30s
+    private static readonly HOURLY_ANNOUNCE_RATE: number = 6000; // 1h (6000 ticks × 600ms)
 
     private static readonly TIMEOUT_NO_CONNECTION: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 500; // 5m with no connection (relaxed for bot background tabs)
     private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 1000; // 10m without any response (relaxed for bot background tabs)
@@ -159,6 +160,7 @@ class World {
     currentTick: number = 0; // the current tick of the game world.
     nextTick: number = 0; // the next time the game world should tick.
     shutdownTick: number = -1;
+    satoshiReplyTick: number = -1; // tick at which Satoshi replies to Bob's hourly announce
     pmCount: number = 1; // can't be 0 as clients will ignore the pm, their array is filled with 0 as default
 
     vars: Int32Array = new Int32Array(); // var shared
@@ -330,15 +332,15 @@ class World {
             if (!skipMaps) {
                 this.gameMap.init();
 
-                // Spawn RST Broker NPC in front of Lumbridge Castle (x=3209, z=3217)
+                // Spawn RST Broker NPC in front of fountain (x=3221, z=3221)
                 // MoveRestrict.NOMOVE + NpcMode.NONE = fully stationary, never wanders
                 try {
                     const brokerNpcType = NpcType.get(741);
-                    const brokerNpc = new Npc(0, 3209, 3217, brokerNpcType.size, brokerNpcType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), 741, MoveRestrict.NOMOVE, brokerNpcType.blockwalk);
+                    const brokerNpc = new Npc(0, 3221, 3221, brokerNpcType.size, brokerNpcType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), 741, MoveRestrict.NOMOVE, brokerNpcType.blockwalk);
                     brokerNpc.targetOp = NpcMode.NONE;
                     this.addNpc(brokerNpc, -1);
                     setRSTBrokerNpc(brokerNpc);
-                    printInfo('[RST] Broker NPC spawned at (3209, 3217)');
+                    printInfo('[RST] Broker NPC spawned at (3221, 3221)');
                 } catch (err) {
                     printError('[RST] Failed to spawn broker NPC: ' + err);
                 }
@@ -355,15 +357,32 @@ class World {
                     printError('[RST] Failed to spawn Satoshi banker: ' + err);
                 }
 
-                // Spawn bank booth Loc — gives the coin-stack minimap icon + bank interface
-                // ID 2213 = bankbooth, shape 0 = wall_straight, angle 2 = east-facing wall
+                // Spawn row of 5 bank booths south of Satoshi at the fountain courtyard
+                // IDs: 2213=bankbooth, shape 10 = centrepiece_straight (freestanding)
                 try {
                     const boothType = LocType.get(2213);
-                    const bankBooth = new Loc(0, TUTORIAL_BANK_X, TUTORIAL_BANK_Z, boothType.width, boothType.length, EntityLifeCycle.DESPAWN, 2213, 0, 2);
-                    this.addLoc(bankBooth, -1);
-                    printInfo('[RST] Bank booth spawned at (' + TUTORIAL_BANK_X + ', ' + TUTORIAL_BANK_Z + ')');
+                    for (let i = 0; i < 5; i++) {
+                        const bankBooth = new Loc(0, TUTORIAL_BANK_X - 2 + i, TUTORIAL_BANK_Z - 1, boothType.width, boothType.length, EntityLifeCycle.DESPAWN, 2213, 10, 0);
+                        this.addLoc(bankBooth, -1);
+                    }
+                    printInfo('[RST] Bank booths spawned at (' + (TUTORIAL_BANK_X - 2) + '-' + (TUTORIAL_BANK_X + 2) + ', ' + (TUTORIAL_BANK_Z - 1) + ')');
                 } catch (err) {
                     printError('[RST] Failed to spawn bank booth: ' + err);
+                }
+
+                // Spawn Fishing Supplies NPC inside Bob's Brilliant Axes shop
+                // Uses type 521 (shop assistant model). Tracked by NID so it intercepts
+                // before any type-based PILL_MERCHANT check in OpNpcHandler.
+                try {
+                    const fishingNpcType = NpcType.get(521);
+                    fishingNpcType.name = 'Fishing Supplies';
+                    const fishingNpc = new Npc(0, 3231, 3207, fishingNpcType.size, fishingNpcType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), 521, MoveRestrict.NOMOVE, fishingNpcType.blockwalk);
+                    fishingNpc.targetOp = NpcMode.NONE;
+                    this.addNpc(fishingNpc, -1);
+                    setFishingSuppliesNid(fishingNpc.nid);
+                    printInfo('[RST] Fishing Supplies NPC spawned at (3231, 3207)');
+                } catch (err) {
+                    printError('[RST] Failed to spawn Fishing Supplies NPC: ' + err);
                 }
             }
         }
@@ -447,6 +466,32 @@ class World {
             // RST Shop broadcast every 50 ticks (~30 seconds) — NPC say() bubble
             if (this.currentTick > 0 && this.currentTick % 50 === 0) {
                 broadcastRSTShop();
+            }
+
+            // Hourly Bob/Satoshi world-save announce
+            if (this.currentTick > 0 && this.currentTick % World.HOURLY_ANNOUNCE_RATE === 0) {
+                const bobLines = [
+                    'Bob says: The world state has been preserved. Your progress is secure.',
+                    'Bob says: Ledger sealed. All gains recorded on the chain.',
+                    'Bob says: Checkpoint reached. Every tile you walked is remembered.',
+                    'Bob says: The block is confirmed. Your progress lives on forever.',
+                ];
+                const bobIdx = Math.floor(this.currentTick / World.HOURLY_ANNOUNCE_RATE) % bobLines.length;
+                this.broadcastMes(bobLines[bobIdx]);
+                this.satoshiReplyTick = this.currentTick + 5; // Satoshi responds 3 seconds later
+            }
+
+            if (this.satoshiReplyTick !== -1 && this.currentTick >= this.satoshiReplyTick) {
+                const satoshiLines = [
+                    'Satoshi says: Bank never closes!',
+                    'Satoshi says: Ledger balanced. Keep stacking.',
+                    'Satoshi says: Trust the chain. Every block counts.',
+                    'Satoshi says: The math never lies. Neither does the chain.',
+                    'Satoshi says: Hodl strong. Bank never closes!',
+                ];
+                const satIdx = Math.floor((this.satoshiReplyTick - 5) / World.HOURLY_ANNOUNCE_RATE) % satoshiLines.length;
+                this.broadcastMes(satoshiLines[satIdx]);
+                this.satoshiReplyTick = -1;
             }
 
             // player logout
@@ -1096,8 +1141,8 @@ class World {
             // Auto-complete Rune Mysteries quest for all players
             {
                 const runeMystVarp = VarPlayerType.getByName('runemysteries');
-                if (runeMystVarp && player.vars[runeMystVarp.id] < 4) {
-                    player.setVar(runeMystVarp.id, 4);
+                if (runeMystVarp && player.vars[runeMystVarp.id] < 6) {
+                    player.setVar(runeMystVarp.id, 6);
                 }
             }
 

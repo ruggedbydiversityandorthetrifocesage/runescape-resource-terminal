@@ -33,9 +33,9 @@ export const TUTORIAL_TREE_Z = 3238;
 export const TUTORIAL_STORE_X = 3213;
 export const TUTORIAL_STORE_Z = 3246;
 
-// Satoshi the Banker — Lumbridge Castle ground floor
-export const TUTORIAL_BANK_X = 3207;
-export const TUTORIAL_BANK_Z = 3220;
+// Satoshi the Banker — Lumbridge fountain courtyard
+export const TUTORIAL_BANK_X = 3222;
+export const TUTORIAL_BANK_Z = 3224;
 
 // Item IDs that count as "harvestable resources" (triggers step 0 → 1)
 export const RESOURCE_ITEM_IDS = new Set([
@@ -52,4 +52,25 @@ export const RESOURCE_ITEM_IDS = new Set([
     447,  // mithril ore
     449,  // adamantite ore
     451,  // runite ore
+    // Fish (raw)
+    317,  // raw shrimp
+    321,  // raw anchovies
+    327,  // raw sardine
+    345,  // raw herring
+    335,  // raw trout
+    331,  // raw salmon
+    349,  // raw pike
+    359,  // raw tuna
+    377,  // raw lobster
+    371,  // raw swordfish
+    383,  // raw shark
+    // Smelted bars
+    2349, // bronze bar
+    2351, // iron bar
+    2353, // steel bar
+    2355, // silver bar
+    2357, // gold bar
+    2359, // mithril bar
+    2361, // adamantite bar
+    2363, // runite bar
 ]);

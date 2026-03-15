@@ -48,7 +48,7 @@ export async function packAll(modelFlags: number[]) {
     // todo: better/native compiler integration to extract npc_add/npc_changetype calls for modelFlags
     generateCompilerSymbols(); // relies on reading configs/interfaces
     try {
-        child_process.execSync(`"${Environment.BUILD_JAVA_PATH}" -jar RuneScriptCompiler.jar`, { stdio: 'inherit' });
+        child_process.execSync(`"${Environment.BUILD_JAVA_PATH}" -jar RuneScriptCompiler.jar`, { stdio: 'inherit', timeout: 30000 });
     } catch (_err) {
         // console.error(err);
         if (parentPort) {
