@@ -1,0 +1,1469 @@
+// Construction skill — V4 Player Housing (3×3 room grid + 12 farm patches)
+//
+// Architecture:
+//   House instance at region (70,200):
+//   x = 4480 + ((house_index-1) mod 6) * 32
+//   z = 12800 + ((house_index-1) / 6) * 32
+//
+// Compact layout (all within +16×+20 footprint — well within 32×32 instance):
+//   Exit portal: (+7,+2) — south center, visible from spawn
+//   Entry/spawn: (+7,+5) — just north of portal
+//   Room grid (3×3, 4 tiles apart):
+//     Plot 0 (+3,+8)   Plot 1 (+7,+8)   Plot 2 (+11,+8)
+//     Plot 3 (+3,+12)  Plot 4 (+7,+12)  Plot 5 (+11,+12)
+//     Plot 6 (+3,+16)  Plot 7 (+7,+16)  Plot 8 (+11,+16)
+//
+// Farm patches (tight outer ring, 12 total):
+//   South (z=+3): patches 0-3 at x=+1,+4,+10,+13
+//   North (z=+19): patches 4-7 at x=+1,+4,+10,+13
+//   West (x=+0):  patches 8-9 at z=+10,+14
+//   East (x=+15): patches 10-11 at z=+10,+14
+//
+// Room types (house_room_N): 0=empty 1=Bedroom(L1) 2=Kitchen(L5) 3=Dining(L10)
+//   4=Workshop(L15) 5=Trophy(L20) 6=Prayer(L45) 7=Portal(L65)
+//
+// Crop types (house_farm_crop_N):
+//   0=none 1=harralander 2=ranarr 3=irit 4=avantoe 5=kwuarm 6=cadantine 7=torstol
+//   10=oak 11=willow 12=maple 13=yew 14=magic
+// Grow ticks: herbs=300 oak=600 willow=900 maple=1200 yew=1800 magic=2500
+
+// ============================================================
+// HOME PORTAL (op1=Build mode, op2=Visit)
+// ============================================================
+
+[oploc1,home_portal]
+if (%house_index < 1) {
+    mes("Something went wrong — no house assigned. Please relog.");
+    return;
+}
+%building_mode = 1;
+mes("You enter your house in building mode.");
+anim(human_castteleport, 0);
+p_delay(1);
+def_coord $entry = ~house_entry_coord;
+p_telejump($entry);
+p_delay(1);
+~house_setup_locs;
+
+[oploc2,home_portal]
+if (%house_index < 1) {
+    mes("Something went wrong — no house assigned. Please relog.");
+    return;
+}
+%building_mode = 0;
+mes("You enter your house.");
+anim(human_castteleport, 0);
+p_delay(1);
+def_coord $entry = ~house_entry_coord;
+p_telejump($entry);
+p_delay(1);
+~house_setup_locs;
+
+// ============================================================
+// EXIT PORTAL
+// ============================================================
+
+[oploc1,house_exit_portal]
+mes("You step through the exit portal...");
+anim(human_castteleport, 0);
+p_delay(1);
+p_telejump(0_50_50_20_13);
+
+[oploc2,house_exit_portal]
+if (%building_mode = 1) {
+    switch_int(~p_choice2("Building Mode: On  (click to turn off)", 1, "Leave House", 2)) {
+        case 1 :
+            %building_mode = 0;
+            mes("Building mode is now OFF.");
+        case 2 :
+            mes("You step through the exit portal...");
+            anim(human_castteleport, 0);
+            p_delay(1);
+            p_telejump(0_50_50_20_13);
+    }
+} else {
+    switch_int(~p_choice2("Building Mode: Off (click to turn on)", 1, "Leave House", 2)) {
+        case 1 :
+            %building_mode = 1;
+            mes("Building mode is now ON.");
+        case 2 :
+            mes("You step through the exit portal...");
+            anim(human_castteleport, 0);
+            p_delay(1);
+            p_telejump(0_50_50_20_13);
+    }
+}
+
+// ============================================================
+// ROOM PLOTS — op1=Build Room (select room type)
+// ============================================================
+
+[oploc1,room_plot_0]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(0);
+
+[oploc1,room_plot_1]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(1);
+
+[oploc1,room_plot_2]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(2);
+
+[oploc1,room_plot_3]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(3);
+
+[oploc1,room_plot_4]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(4);
+
+[oploc1,room_plot_5]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(5);
+
+[oploc1,room_plot_6]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(6);
+
+[oploc1,room_plot_7]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(7);
+
+[oploc1,room_plot_8]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_select_room(8);
+
+// ============================================================
+// ROOM FURNITURE SPOTS — op1=Build, op2=Demolish Room
+// ============================================================
+
+[oploc1,room_furn_0]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(0, ~house_get_room(0));
+
+[oploc1,room_furn_1]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(1, ~house_get_room(1));
+
+[oploc1,room_furn_2]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(2, ~house_get_room(2));
+
+[oploc1,room_furn_3]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(3, ~house_get_room(3));
+
+[oploc1,room_furn_4]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(4, ~house_get_room(4));
+
+[oploc1,room_furn_5]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(5, ~house_get_room(5));
+
+[oploc1,room_furn_6]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(6, ~house_get_room(6));
+
+[oploc1,room_furn_7]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(7, ~house_get_room(7));
+
+[oploc1,room_furn_8]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+~house_do_build_furniture(8, ~house_get_room(8));
+
+[oploc2,room_furn_0]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(0);
+
+[oploc2,room_furn_1]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(1);
+
+[oploc2,room_furn_2]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(2);
+
+[oploc2,room_furn_3]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(3);
+
+[oploc2,room_furn_4]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(4);
+
+[oploc2,room_furn_5]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(5);
+
+[oploc2,room_furn_6]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(6);
+
+[oploc2,room_furn_7]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(7);
+
+[oploc2,room_furn_8]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+~house_demolish_room(8);
+
+// ============================================================
+// GHOST FURNITURE — op1=Build, op2=Demolish Room
+// (shown in build mode when room is set but no furniture placed)
+// ============================================================
+
+[oploc1,house_ghost_bedroom]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gbp = ~house_find_plot_by_coord(loc_coord);
+if ($gbp < 0) { return; }
+~house_do_build_furniture($gbp, 1);
+
+[oploc2,house_ghost_bedroom]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gbp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gbp2 < 0) { return; }
+~house_demolish_room($gbp2);
+
+[oploc1,house_ghost_kitchen]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gkp = ~house_find_plot_by_coord(loc_coord);
+if ($gkp < 0) { return; }
+~house_do_build_furniture($gkp, 2);
+
+[oploc2,house_ghost_kitchen]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gkp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gkp2 < 0) { return; }
+~house_demolish_room($gkp2);
+
+[oploc1,house_ghost_dining]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gdp = ~house_find_plot_by_coord(loc_coord);
+if ($gdp < 0) { return; }
+~house_do_build_furniture($gdp, 3);
+
+[oploc2,house_ghost_dining]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gdp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gdp2 < 0) { return; }
+~house_demolish_room($gdp2);
+
+[oploc1,house_ghost_workshop]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gwp = ~house_find_plot_by_coord(loc_coord);
+if ($gwp < 0) { return; }
+~house_do_build_furniture($gwp, 4);
+
+[oploc2,house_ghost_workshop]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gwp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gwp2 < 0) { return; }
+~house_demolish_room($gwp2);
+
+[oploc1,house_ghost_trophy]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gtp = ~house_find_plot_by_coord(loc_coord);
+if ($gtp < 0) { return; }
+~house_do_build_furniture($gtp, 5);
+
+[oploc2,house_ghost_trophy]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gtp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gtp2 < 0) { return; }
+~house_demolish_room($gtp2);
+
+[oploc1,house_ghost_prayer]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gpp = ~house_find_plot_by_coord(loc_coord);
+if ($gpp < 0) { return; }
+~house_do_build_furniture($gpp, 6);
+
+[oploc2,house_ghost_prayer]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gpp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gpp2 < 0) { return; }
+~house_demolish_room($gpp2);
+
+[oploc1,house_ghost_portal]
+if (%building_mode < 1) { mes("You can only build while in building mode."); return; }
+def_int $gprp = ~house_find_plot_by_coord(loc_coord);
+if ($gprp < 0) { return; }
+~house_do_build_furniture($gprp, 7);
+
+[oploc2,house_ghost_portal]
+if (%building_mode < 1) { mes("You need building mode to demolish a room."); return; }
+def_int $gprp2 = ~house_find_plot_by_coord(loc_coord);
+if ($gprp2 < 0) { return; }
+~house_demolish_room($gprp2);
+
+// ============================================================
+// FURNITURE INTERACTIONS
+// ============================================================
+
+[oploc1,house_bed]
+mes("You flop onto the bed. Very comfortable.");
+
+[oploc1,house_fourposter_bed]
+mes("You lie back on the four-poster bed. Truly the finest sleep.");
+
+[oploc1,house_table]
+mes("You run your hand over the smooth tabletop.");
+
+[oploc1,house_oak_table]
+mes("You run your hand over the smooth oak dining table.");
+
+[oploc1,house_teak_table]
+mes("You admire the finely crafted teak dining table.");
+
+[oploc1,house_range]
+mes("You cook some food on the clay range.");
+stat_advance(cooking, 2500);
+
+[oploc1,house_steel_range]
+mes("You cook on the steel range. A fine piece of equipment.");
+stat_advance(cooking, 5000);
+
+[oploc1,house_workbench]
+mes("You practice your craft at the workbench.");
+stat_advance(crafting, 2500);
+
+[oploc1,house_trophy]
+mes("You admire your trophy. A fine accomplishment!");
+
+[oploc1,house_altar_limestone]
+anim(human_bow, 0);
+stat_advance(prayer, 10000);
+mes("You kneel before the limestone altar. (10,000 Prayer XP)");
+
+[oploc1,house_altar_marble]
+anim(human_bow, 0);
+stat_advance(prayer, 25000);
+mes("You kneel before the marble altar. A powerful feeling washes over you. (25,000 Prayer XP)");
+
+[oploc1,house_altar_gilded]
+anim(human_bow, 0);
+stat_advance(prayer, 50000);
+mes("You kneel before the gilded altar. Your prayers are heard with great power. (50,000 Prayer XP)");
+
+[oploc1,house_portal]
+if (%house_portal_dest < 1) {
+    mes("The portal is not yet attuned. Right-click it to set a destination.");
+    return;
+}
+mes("You step through the portal...");
+anim(human_castteleport, 0);
+p_delay(1);
+switch_int(%house_portal_dest) {
+    case 1 : p_telejump(0_50_50_20_13);
+    case 2 : p_telejump(0_49_54_19_6);
+    case 3 : p_telejump(0_47_53_38_38);
+    case 4 : p_telejump(0_43_53_50_50);
+    case 5 : p_telejump(0_43_52_42_26);
+    case default : p_telejump(0_50_50_20_13);
+}
+
+[oploc2,house_portal]
+if (%building_mode = 1) {
+    def_int $portchoice = ~p_choice3("Attune Portal", 1, "Remove Portal Frame", 2, "Cancel", 0);
+    if ($portchoice = 0) { return; }
+    if ($portchoice = 2) {
+        def_int $pplot = ~house_find_plot_by_coord(loc_coord);
+        if ($pplot < 0) { return; }
+        loc_del(1);
+        ~house_set_rfurn($pplot, 0);
+        ~house_restore_room_furn($pplot);
+        %house_portal_dest = 0;
+        stat_advance(construction, 33000);
+        mes("You dismantle the portal frame. (33,000 XP)");
+        return;
+    }
+}
+~house_portal_attune;
+
+// ============================================================
+// FURNITURE REMOVAL — use loc_coord to find the plot
+// ============================================================
+
+[oploc2,house_bed]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $bp = ~house_find_plot_by_coord(loc_coord);
+if ($bp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($bp, 0);
+~house_restore_room_furn($bp);
+stat_advance(construction, 825);
+mes("You dismantle the bed. (825 XP)");
+
+[oploc2,house_fourposter_bed]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $fbp = ~house_find_plot_by_coord(loc_coord);
+if ($fbp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($fbp, 0);
+~house_restore_room_furn($fbp);
+stat_advance(construction, 132000);
+mes("You dismantle the four-poster bed. (132,000 XP)");
+
+[oploc2,house_table]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $tp = ~house_find_plot_by_coord(loc_coord);
+if ($tp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($tp, 0);
+~house_restore_room_furn($tp);
+stat_advance(construction, 265);
+mes("You dismantle the wooden table. (265 XP)");
+
+[oploc2,house_oak_table]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $otp = ~house_find_plot_by_coord(loc_coord);
+if ($otp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($otp, 0);
+~house_restore_room_furn($otp);
+stat_advance(construction, 3960);
+mes("You dismantle the oak dining table. (3,960 XP)");
+
+[oploc2,house_teak_table]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $ttp = ~house_find_plot_by_coord(loc_coord);
+if ($ttp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($ttp, 0);
+~house_restore_room_furn($ttp);
+stat_advance(construction, 16500);
+mes("You dismantle the teak dining table. (16,500 XP)");
+
+[oploc2,house_range]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $rp = ~house_find_plot_by_coord(loc_coord);
+if ($rp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($rp, 0);
+~house_restore_room_furn($rp);
+stat_advance(construction, 825);
+mes("You dismantle the clay range. (825 XP)");
+
+[oploc2,house_steel_range]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $srp = ~house_find_plot_by_coord(loc_coord);
+if ($srp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($srp, 0);
+~house_restore_room_furn($srp);
+stat_advance(construction, 10000);
+mes("You dismantle the steel range. (10,000 XP)");
+
+[oploc2,house_workbench]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $wbp = ~house_find_plot_by_coord(loc_coord);
+if ($wbp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($wbp, 0);
+~house_restore_room_furn($wbp);
+stat_advance(construction, 3300);
+mes("You dismantle the workbench. (3,300 XP)");
+
+[oploc2,house_trophy]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $trp = ~house_find_plot_by_coord(loc_coord);
+if ($trp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($trp, 0);
+~house_restore_room_furn($trp);
+stat_advance(construction, 5000);
+mes("You dismantle the trophy stand. (5,000 XP)");
+
+[oploc2,house_altar_limestone]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $alp = ~house_find_plot_by_coord(loc_coord);
+if ($alp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($alp, 0);
+~house_restore_room_furn($alp);
+stat_advance(construction, 5000);
+mes("You dismantle the limestone altar. (5,000 XP)");
+
+[oploc2,house_altar_marble]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $amp = ~house_find_plot_by_coord(loc_coord);
+if ($amp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($amp, 0);
+~house_restore_room_furn($amp);
+stat_advance(construction, 66000);
+mes("You dismantle the marble altar. (66,000 XP)");
+
+[oploc2,house_altar_gilded]
+if (%building_mode < 1) { mes("You need building mode to remove furniture."); return; }
+def_int $agp = ~house_find_plot_by_coord(loc_coord);
+if ($agp < 0) { return; }
+loc_del(1);
+~house_set_rfurn($agp, 0);
+~house_restore_room_furn($agp);
+stat_advance(construction, 165000);
+mes("You dismantle the gilded altar. (165,000 XP)");
+
+// ============================================================
+// FARM PATCH DISPATCH — 12 patches, 5 operations each
+// ============================================================
+
+[oplocu,house_farm_patch_0]  ~house_farm_plant_menu(0);
+[oplocu,house_farm_patch_1]  ~house_farm_plant_menu(1);
+[oplocu,house_farm_patch_2]  ~house_farm_plant_menu(2);
+[oplocu,house_farm_patch_3]  ~house_farm_plant_menu(3);
+[oplocu,house_farm_patch_4]  ~house_farm_plant_menu(4);
+[oplocu,house_farm_patch_5]  ~house_farm_plant_menu(5);
+[oplocu,house_farm_patch_6]  ~house_farm_plant_menu(6);
+[oplocu,house_farm_patch_7]  ~house_farm_plant_menu(7);
+[oplocu,house_farm_patch_8]  ~house_farm_plant_menu(8);
+[oplocu,house_farm_patch_9]  ~house_farm_plant_menu(9);
+[oplocu,house_farm_patch_10] ~house_farm_plant_menu(10);
+[oplocu,house_farm_patch_11] ~house_farm_plant_menu(11);
+
+[oploc1,house_farm_patch_0]  ~house_farm_plant_menu(0);
+[oploc1,house_farm_patch_1]  ~house_farm_plant_menu(1);
+[oploc1,house_farm_patch_2]  ~house_farm_plant_menu(2);
+[oploc1,house_farm_patch_3]  ~house_farm_plant_menu(3);
+[oploc1,house_farm_patch_4]  ~house_farm_plant_menu(4);
+[oploc1,house_farm_patch_5]  ~house_farm_plant_menu(5);
+[oploc1,house_farm_patch_6]  ~house_farm_plant_menu(6);
+[oploc1,house_farm_patch_7]  ~house_farm_plant_menu(7);
+[oploc1,house_farm_patch_8]  ~house_farm_plant_menu(8);
+[oploc1,house_farm_patch_9]  ~house_farm_plant_menu(9);
+[oploc1,house_farm_patch_10] ~house_farm_plant_menu(10);
+[oploc1,house_farm_patch_11] ~house_farm_plant_menu(11);
+
+[oploc2,house_farm_patch_0]  ~house_farm_inspect(0);
+[oploc2,house_farm_patch_1]  ~house_farm_inspect(1);
+[oploc2,house_farm_patch_2]  ~house_farm_inspect(2);
+[oploc2,house_farm_patch_3]  ~house_farm_inspect(3);
+[oploc2,house_farm_patch_4]  ~house_farm_inspect(4);
+[oploc2,house_farm_patch_5]  ~house_farm_inspect(5);
+[oploc2,house_farm_patch_6]  ~house_farm_inspect(6);
+[oploc2,house_farm_patch_7]  ~house_farm_inspect(7);
+[oploc2,house_farm_patch_8]  ~house_farm_inspect(8);
+[oploc2,house_farm_patch_9]  ~house_farm_inspect(9);
+[oploc2,house_farm_patch_10] ~house_farm_inspect(10);
+[oploc2,house_farm_patch_11] ~house_farm_inspect(11);
+
+[oploc3,house_farm_patch_0]  ~house_farm_harvest(0);
+[oploc3,house_farm_patch_1]  ~house_farm_harvest(1);
+[oploc3,house_farm_patch_2]  ~house_farm_harvest(2);
+[oploc3,house_farm_patch_3]  ~house_farm_harvest(3);
+[oploc3,house_farm_patch_4]  ~house_farm_harvest(4);
+[oploc3,house_farm_patch_5]  ~house_farm_harvest(5);
+[oploc3,house_farm_patch_6]  ~house_farm_harvest(6);
+[oploc3,house_farm_patch_7]  ~house_farm_harvest(7);
+[oploc3,house_farm_patch_8]  ~house_farm_harvest(8);
+[oploc3,house_farm_patch_9]  ~house_farm_harvest(9);
+[oploc3,house_farm_patch_10] ~house_farm_harvest(10);
+[oploc3,house_farm_patch_11] ~house_farm_harvest(11);
+
+[oploc4,house_farm_patch_0]  ~house_farm_clear(0);
+[oploc4,house_farm_patch_1]  ~house_farm_clear(1);
+[oploc4,house_farm_patch_2]  ~house_farm_clear(2);
+[oploc4,house_farm_patch_3]  ~house_farm_clear(3);
+[oploc4,house_farm_patch_4]  ~house_farm_clear(4);
+[oploc4,house_farm_patch_5]  ~house_farm_clear(5);
+[oploc4,house_farm_patch_6]  ~house_farm_clear(6);
+[oploc4,house_farm_patch_7]  ~house_farm_clear(7);
+[oploc4,house_farm_patch_8]  ~house_farm_clear(8);
+[oploc4,house_farm_patch_9]  ~house_farm_clear(9);
+[oploc4,house_farm_patch_10] ~house_farm_clear(10);
+[oploc4,house_farm_patch_11] ~house_farm_clear(11);
+
+// ============================================================
+// PROCS — coordinate helpers
+// ============================================================
+
+[proc,house_base_coord]()(coord)
+def_int $idx0 = calc(%house_index - 1);
+def_int $col = modulo($idx0, 6);
+def_int $row = calc($idx0 / 6);
+def_int $dx = calc($col * 32);
+def_int $dz = calc($row * 32);
+return (movecoord(0_70_200_0_0, $dx, $dz, 0));
+
+[proc,house_entry_coord]()(coord)
+def_coord $base = ~house_base_coord;
+return (movecoord($base, 7, 5, 0));
+
+[proc,house_plot_coord](int $plot)(coord)
+def_coord $base = ~house_base_coord;
+switch_int($plot) {
+    case 0 : return (movecoord($base, 3,  8,  0));
+    case 1 : return (movecoord($base, 7,  8,  0));
+    case 2 : return (movecoord($base, 11, 8,  0));
+    case 3 : return (movecoord($base, 3,  12, 0));
+    case 4 : return (movecoord($base, 7,  12, 0));
+    case 5 : return (movecoord($base, 11, 12, 0));
+    case 6 : return (movecoord($base, 3,  16, 0));
+    case 7 : return (movecoord($base, 7,  16, 0));
+    case 8 : return (movecoord($base, 11, 16, 0));
+    case default : return ($base);
+}
+
+[proc,house_farm_patch_coord](int $patch)(coord)
+def_coord $base = ~house_base_coord;
+switch_int($patch) {
+    case 0  : return (movecoord($base, 1,  3,  0));
+    case 1  : return (movecoord($base, 4,  3,  0));
+    case 2  : return (movecoord($base, 10, 3,  0));
+    case 3  : return (movecoord($base, 13, 3,  0));
+    case 4  : return (movecoord($base, 1,  19, 0));
+    case 5  : return (movecoord($base, 4,  19, 0));
+    case 6  : return (movecoord($base, 10, 19, 0));
+    case 7  : return (movecoord($base, 13, 19, 0));
+    case 8  : return (movecoord($base, 0,  10, 0));
+    case 9  : return (movecoord($base, 0,  14, 0));
+    case 10 : return (movecoord($base, 15, 10, 0));
+    case 11 : return (movecoord($base, 15, 14, 0));
+    case default : return ($base);
+}
+
+[proc,house_find_plot_by_coord](coord $lc)(int)
+def_coord $base = ~house_base_coord;
+def_coord $c0 = movecoord($base, 3,  8,  0);
+if ($lc = $c0) { return (0); }
+def_coord $c1 = movecoord($base, 7,  8,  0);
+if ($lc = $c1) { return (1); }
+def_coord $c2 = movecoord($base, 11, 8,  0);
+if ($lc = $c2) { return (2); }
+def_coord $c3 = movecoord($base, 3,  12, 0);
+if ($lc = $c3) { return (3); }
+def_coord $c4 = movecoord($base, 7,  12, 0);
+if ($lc = $c4) { return (4); }
+def_coord $c5 = movecoord($base, 11, 12, 0);
+if ($lc = $c5) { return (5); }
+def_coord $c6 = movecoord($base, 3,  16, 0);
+if ($lc = $c6) { return (6); }
+def_coord $c7 = movecoord($base, 7,  16, 0);
+if ($lc = $c7) { return (7); }
+def_coord $c8 = movecoord($base, 11, 16, 0);
+if ($lc = $c8) { return (8); }
+return (-1);
+
+// ============================================================
+// PROCS — varp accessors
+// ============================================================
+
+[proc,house_get_room](int $plot)(int)
+switch_int($plot) {
+    case 0 : return (%house_room_0);
+    case 1 : return (%house_room_1);
+    case 2 : return (%house_room_2);
+    case 3 : return (%house_room_3);
+    case 4 : return (%house_room_4);
+    case 5 : return (%house_room_5);
+    case 6 : return (%house_room_6);
+    case 7 : return (%house_room_7);
+    case 8 : return (%house_room_8);
+    case default : return (0);
+}
+
+[proc,house_set_room](int $plot, int $val)
+switch_int($plot) {
+    case 0 : %house_room_0 = $val;
+    case 1 : %house_room_1 = $val;
+    case 2 : %house_room_2 = $val;
+    case 3 : %house_room_3 = $val;
+    case 4 : %house_room_4 = $val;
+    case 5 : %house_room_5 = $val;
+    case 6 : %house_room_6 = $val;
+    case 7 : %house_room_7 = $val;
+    case 8 : %house_room_8 = $val;
+}
+
+[proc,house_get_rfurn](int $plot)(int)
+switch_int($plot) {
+    case 0 : return (%house_rfurn_0);
+    case 1 : return (%house_rfurn_1);
+    case 2 : return (%house_rfurn_2);
+    case 3 : return (%house_rfurn_3);
+    case 4 : return (%house_rfurn_4);
+    case 5 : return (%house_rfurn_5);
+    case 6 : return (%house_rfurn_6);
+    case 7 : return (%house_rfurn_7);
+    case 8 : return (%house_rfurn_8);
+    case default : return (0);
+}
+
+[proc,house_set_rfurn](int $plot, int $val)
+switch_int($plot) {
+    case 0 : %house_rfurn_0 = $val;
+    case 1 : %house_rfurn_1 = $val;
+    case 2 : %house_rfurn_2 = $val;
+    case 3 : %house_rfurn_3 = $val;
+    case 4 : %house_rfurn_4 = $val;
+    case 5 : %house_rfurn_5 = $val;
+    case 6 : %house_rfurn_6 = $val;
+    case 7 : %house_rfurn_7 = $val;
+    case 8 : %house_rfurn_8 = $val;
+}
+
+// ============================================================
+// PROCS — LOC restore helpers
+// ============================================================
+
+[proc,house_restore_room_plot](int $plot)
+def_coord $pos = ~house_plot_coord($plot);
+switch_int($plot) {
+    case 0 : loc_add($pos, room_plot_0, 0, centrepiece_straight, 2147483647);
+    case 1 : loc_add($pos, room_plot_1, 0, centrepiece_straight, 2147483647);
+    case 2 : loc_add($pos, room_plot_2, 0, centrepiece_straight, 2147483647);
+    case 3 : loc_add($pos, room_plot_3, 0, centrepiece_straight, 2147483647);
+    case 4 : loc_add($pos, room_plot_4, 0, centrepiece_straight, 2147483647);
+    case 5 : loc_add($pos, room_plot_5, 0, centrepiece_straight, 2147483647);
+    case 6 : loc_add($pos, room_plot_6, 0, centrepiece_straight, 2147483647);
+    case 7 : loc_add($pos, room_plot_7, 0, centrepiece_straight, 2147483647);
+    case 8 : loc_add($pos, room_plot_8, 0, centrepiece_straight, 2147483647);
+}
+
+[proc,house_restore_room_furn](int $plot)
+def_coord $pos = ~house_plot_coord($plot);
+def_int $rtype = ~house_get_room($plot);
+~house_place_ghost($pos, $rtype);
+
+[proc,house_place_ghost](coord $pos, int $rtype)
+switch_int($rtype) {
+    case 1 : loc_add($pos, house_ghost_bedroom,  0, centrepiece_straight, 2147483647);
+    case 2 : loc_add($pos, house_ghost_kitchen,  0, centrepiece_straight, 2147483647);
+    case 3 : loc_add($pos, house_ghost_dining,   0, centrepiece_straight, 2147483647);
+    case 4 : loc_add($pos, house_ghost_workshop, 0, centrepiece_straight, 2147483647);
+    case 5 : loc_add($pos, house_ghost_trophy,   0, centrepiece_straight, 2147483647);
+    case 6 : loc_add($pos, house_ghost_prayer,   0, centrepiece_straight, 2147483647);
+    case 7 : loc_add($pos, house_ghost_portal,   0, centrepiece_straight, 2147483647);
+}
+
+// ============================================================
+// PROC — house_do_select_room (room type selection dialog)
+// ============================================================
+
+[proc,house_do_select_room](int $plot)
+def_int $clvl = stat(construction);
+def_int $pg1 = ~p_choice5("Bedroom (L1)", 1, "Kitchen (L5)", 2, "Dining Room (L10)", 3, "Workshop (L15)", 4, "More rooms...", 9);
+def_int $sel = $pg1;
+if ($pg1 = 9) {
+    def_int $pg2 = ~p_choice5("Trophy Room (L20)", 5, "Prayer Room (L45)", 6, "Portal Room (L65)", 7, "Back", 10, "Cancel", 0);
+    $sel = $pg2;
+    if ($pg2 = 10 | $pg2 = 0) { return; }
+}
+if ($sel = 0) { return; }
+if ($sel = 2 & $clvl < 5)  { mes("You need level 5 Construction to build a Kitchen."); return; }
+if ($sel = 3 & $clvl < 10) { mes("You need level 10 Construction to build a Dining Room."); return; }
+if ($sel = 4 & $clvl < 15) { mes("You need level 15 Construction to build a Workshop."); return; }
+if ($sel = 5 & $clvl < 20) { mes("You need level 20 Construction to build a Trophy Room."); return; }
+if ($sel = 6 & $clvl < 45) { mes("You need level 45 Construction to build a Prayer Room."); return; }
+if ($sel = 7 & $clvl < 65) { mes("You need level 65 Construction to build a Portal Room."); return; }
+anim(human_smithing, 0);
+loc_del(1);
+~house_set_room($plot, $sel);
+~house_restore_room_furn($plot);
+switch_int($sel) {
+    case 1 : mes("You designate this area as a bedroom. Now build some furniture!");
+    case 2 : mes("You set up a kitchen area. Install a range to start cooking!");
+    case 3 : mes("You create a dining room. Add a table to seat guests!");
+    case 4 : mes("You establish a workshop. Build a workbench to craft!");
+    case 5 : mes("You set up a trophy room. Build a stand to display trophies!");
+    case 6 : mes("You consecrate a prayer room. Build an altar to pray!");
+    case 7 : mes("You frame a portal room. Build a portal frame to travel!");
+}
+
+// ============================================================
+// PROC — house_demolish_room
+// ============================================================
+
+[proc,house_demolish_room](int $plot)
+def_int $confirm = ~p_choice2("Yes, demolish this room", 1, "Cancel", 0);
+if ($confirm = 0) { return; }
+loc_del(1);
+~house_set_room($plot, 0);
+~house_set_rfurn($plot, 0);
+~house_restore_room_plot($plot);
+mes("You demolish the room. The area is now an empty plot.");
+
+// ============================================================
+// PROC — house_do_build_furniture
+// ============================================================
+
+[proc,house_do_build_furniture](int $plot, int $rtype)
+def_int $clvl = stat(construction);
+def_coord $fpos = ~house_plot_coord($plot);
+if ($rtype = 1) {
+    // Bedroom
+    if ($clvl >= 85) {
+        def_int $bc = ~p_choice3("Build Bed (L1 — 2,500 XP)", 1, "Build Four-poster Bed (L85 — 400,000 XP)", 2, "Cancel", 0);
+        if ($bc = 0) { return; }
+        if ($bc = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_fourposter_bed, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 400000);
+            mes("You build a lavish four-poster bed. (400,000 XP)");
+            return;
+        }
+    }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_bed, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 2500);
+    mes("You build a bed. (2,500 XP)");
+    return;
+}
+if ($rtype = 2) {
+    // Kitchen
+    if ($clvl < 5) { mes("You need level 5 Construction to build here."); return; }
+    if ($clvl >= 40) {
+        def_int $kc = ~p_choice3("Build Clay Range (L5 — 2,000 XP)", 1, "Build Steel Range (L40 — 30,000 XP)", 2, "Cancel", 0);
+        if ($kc = 0) { return; }
+        if ($kc = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_steel_range, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 30000);
+            mes("You install a steel range. (30,000 XP)");
+            return;
+        }
+    }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_range, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 2000);
+    mes("You build a clay range. (2,000 XP)");
+    return;
+}
+if ($rtype = 3) {
+    // Dining Room
+    if ($clvl >= 56) {
+        def_int $dc = ~p_choice4("Build Wooden Table (L1 — 800 XP)", 1, "Build Oak Table (L22 — 12,000 XP)", 2, "Build Teak Table (L56 — 50,000 XP)", 3, "Cancel", 0);
+        if ($dc = 0) { return; }
+        if ($dc = 3) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_teak_table, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 3);
+            stat_advance(construction, 50000);
+            mes("You build a teak dining table. (50,000 XP)");
+            return;
+        }
+        if ($dc = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_oak_table, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 12000);
+            mes("You build an oak dining table. (12,000 XP)");
+            return;
+        }
+    } else if ($clvl >= 22) {
+        def_int $dc2 = ~p_choice3("Build Wooden Table (L1 — 800 XP)", 1, "Build Oak Table (L22 — 12,000 XP)", 2, "Cancel", 0);
+        if ($dc2 = 0) { return; }
+        if ($dc2 = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_oak_table, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 12000);
+            mes("You build an oak dining table. (12,000 XP)");
+            return;
+        }
+    }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_table, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 800);
+    mes("You build a wooden table. (800 XP)");
+    return;
+}
+if ($rtype = 4) {
+    // Workshop
+    if ($clvl < 15) { mes("You need level 15 Construction to build a workbench."); return; }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_workbench, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 10000);
+    mes("You build a sturdy workbench. (10,000 XP)");
+    return;
+}
+if ($rtype = 5) {
+    // Trophy Room
+    if ($clvl < 20) { mes("You need level 20 Construction to build a trophy stand."); return; }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_trophy, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 15000);
+    mes("You build a trophy stand. (15,000 XP)");
+    return;
+}
+if ($rtype = 6) {
+    // Prayer Room
+    if ($clvl < 45) { mes("You need level 45 Construction to build an altar."); return; }
+    if ($clvl >= 90) {
+        def_int $ac = ~p_choice4("Build Limestone Altar (L45 — 15,000 XP)", 1, "Build Marble Altar (L75 — 200,000 XP)", 2, "Build Gilded Altar (L90 — 500,000 XP)", 3, "Cancel", 0);
+        if ($ac = 0) { return; }
+        if ($ac = 3) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_altar_gilded, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 3);
+            stat_advance(construction, 500000);
+            mes("You construct a gilded altar. (500,000 XP)");
+            return;
+        }
+        if ($ac = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_altar_marble, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 200000);
+            mes("You construct a marble altar. (200,000 XP)");
+            return;
+        }
+    } else if ($clvl >= 75) {
+        def_int $ac2 = ~p_choice3("Build Limestone Altar (L45 — 15,000 XP)", 1, "Build Marble Altar (L75 — 200,000 XP)", 2, "Cancel", 0);
+        if ($ac2 = 0) { return; }
+        if ($ac2 = 2) {
+            anim(human_smithing, 0);
+            loc_del(1);
+            loc_add($fpos, house_altar_marble, 0, centrepiece_straight, 2147483647);
+            ~house_set_rfurn($plot, 2);
+            stat_advance(construction, 200000);
+            mes("You construct a marble altar. (200,000 XP)");
+            return;
+        }
+    }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_altar_limestone, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    stat_advance(construction, 15000);
+    mes("You construct a limestone altar. (15,000 XP)");
+    return;
+}
+if ($rtype = 7) {
+    // Portal Room
+    if ($clvl < 65) { mes("You need level 65 Construction to build a portal frame."); return; }
+    anim(human_smithing, 0);
+    loc_del(1);
+    loc_add($fpos, house_portal, 0, centrepiece_straight, 2147483647);
+    ~house_set_rfurn($plot, 1);
+    %house_portal_dest = 0;
+    stat_advance(construction, 100000);
+    mes("You build a portal frame. Right-click to attune it to a destination. (100,000 XP)");
+    return;
+}
+
+// ============================================================
+// PROC — house_portal_attune
+// ============================================================
+
+[proc,house_portal_attune]
+def_int $dest = ~p_choice4("Lumbridge", 1, "Varrock", 2, "Falador", 3, "Ardougne / Yanille", 4);
+if ($dest = 0) { return; }
+if ($dest = 4) {
+    def_int $dest2 = ~p_choice3("Ardougne", 4, "Yanille", 5, "Cancel", 0);
+    if ($dest2 = 0) { return; }
+    %house_portal_dest = $dest2;
+    switch_int($dest2) {
+        case 4 : mes("The portal shimmers — attuned to Ardougne.");
+        case 5 : mes("The portal shimmers — attuned to Yanille.");
+    }
+    return;
+}
+%house_portal_dest = $dest;
+switch_int($dest) {
+    case 1 : mes("The portal shimmers — attuned to Lumbridge.");
+    case 2 : mes("The portal shimmers — attuned to Varrock.");
+    case 3 : mes("The portal shimmers — attuned to Falador.");
+}
+
+// ============================================================
+// PROC — house_setup_locs (called on every house entry)
+// ============================================================
+
+[proc,house_setup_locs]
+mes("DEBUG: house_setup_locs idx=<tostring(%house_index)>");
+def_coord $base = ~house_base_coord;
+
+// Exit portal — center-south at (+7,+2), player spawns at (+7,+5) just north
+def_coord $ep = movecoord($base, 7, 2, 0);
+loc_add($ep, house_exit_portal, 0, centrepiece_straight, 2147483647);
+mes("DEBUG: exit portal added");
+
+// Room plot 0
+def_int $rt0 = ~house_get_room(0);
+def_int $rf0 = ~house_get_rfurn(0);
+def_coord $p0 = ~house_plot_coord(0);
+mes("DEBUG: plot0 rtype=<tostring($rt0)> rfurn=<tostring($rf0)>");
+if ($rt0 = 0) { loc_add($p0, room_plot_0, 0, centrepiece_straight, 2147483647); mes("DEBUG: plot0 glow placed"); }
+else { ~house_setup_place_furniture($rt0, $rf0, 0); }
+
+// Room plot 1
+def_int $rt1 = ~house_get_room(1);
+def_int $rf1 = ~house_get_rfurn(1);
+def_coord $p1 = ~house_plot_coord(1);
+if ($rt1 = 0) { loc_add($p1, room_plot_1, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt1, $rf1, 1); }
+
+// Room plot 2
+def_int $rt2 = ~house_get_room(2);
+def_int $rf2 = ~house_get_rfurn(2);
+def_coord $p2 = ~house_plot_coord(2);
+if ($rt2 = 0) { loc_add($p2, room_plot_2, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt2, $rf2, 2); }
+
+// Room plot 3
+def_int $rt3 = ~house_get_room(3);
+def_int $rf3 = ~house_get_rfurn(3);
+def_coord $p3 = ~house_plot_coord(3);
+if ($rt3 = 0) { loc_add($p3, room_plot_3, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt3, $rf3, 3); }
+
+// Room plot 4
+def_int $rt4 = ~house_get_room(4);
+def_int $rf4 = ~house_get_rfurn(4);
+def_coord $p4 = ~house_plot_coord(4);
+if ($rt4 = 0) { loc_add($p4, room_plot_4, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt4, $rf4, 4); }
+
+// Room plot 5
+def_int $rt5 = ~house_get_room(5);
+def_int $rf5 = ~house_get_rfurn(5);
+def_coord $p5 = ~house_plot_coord(5);
+if ($rt5 = 0) { loc_add($p5, room_plot_5, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt5, $rf5, 5); }
+
+// Room plot 6
+def_int $rt6 = ~house_get_room(6);
+def_int $rf6 = ~house_get_rfurn(6);
+def_coord $p6 = ~house_plot_coord(6);
+if ($rt6 = 0) { loc_add($p6, room_plot_6, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt6, $rf6, 6); }
+
+// Room plot 7
+def_int $rt7 = ~house_get_room(7);
+def_int $rf7 = ~house_get_rfurn(7);
+def_coord $p7 = ~house_plot_coord(7);
+if ($rt7 = 0) { loc_add($p7, room_plot_7, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt7, $rf7, 7); }
+
+// Room plot 8
+def_int $rt8 = ~house_get_room(8);
+def_int $rf8 = ~house_get_rfurn(8);
+def_coord $p8 = ~house_plot_coord(8);
+if ($rt8 = 0) { loc_add($p8, room_plot_8, 0, centrepiece_straight, 2147483647); }
+else { ~house_setup_place_furniture($rt8, $rf8, 8); }
+
+// Farm patches 0-11
+def_coord $f0  = ~house_farm_patch_coord(0);  loc_add($f0,  house_farm_patch_0,  0, centrepiece_straight, 2147483647);
+def_coord $f1  = ~house_farm_patch_coord(1);  loc_add($f1,  house_farm_patch_1,  0, centrepiece_straight, 2147483647);
+def_coord $f2  = ~house_farm_patch_coord(2);  loc_add($f2,  house_farm_patch_2,  0, centrepiece_straight, 2147483647);
+def_coord $f3  = ~house_farm_patch_coord(3);  loc_add($f3,  house_farm_patch_3,  0, centrepiece_straight, 2147483647);
+def_coord $f4  = ~house_farm_patch_coord(4);  loc_add($f4,  house_farm_patch_4,  0, centrepiece_straight, 2147483647);
+def_coord $f5  = ~house_farm_patch_coord(5);  loc_add($f5,  house_farm_patch_5,  0, centrepiece_straight, 2147483647);
+def_coord $f6  = ~house_farm_patch_coord(6);  loc_add($f6,  house_farm_patch_6,  0, centrepiece_straight, 2147483647);
+def_coord $f7  = ~house_farm_patch_coord(7);  loc_add($f7,  house_farm_patch_7,  0, centrepiece_straight, 2147483647);
+def_coord $f8  = ~house_farm_patch_coord(8);  loc_add($f8,  house_farm_patch_8,  0, centrepiece_straight, 2147483647);
+def_coord $f9  = ~house_farm_patch_coord(9);  loc_add($f9,  house_farm_patch_9,  0, centrepiece_straight, 2147483647);
+def_coord $f10 = ~house_farm_patch_coord(10); loc_add($f10, house_farm_patch_10, 0, centrepiece_straight, 2147483647);
+def_coord $f11 = ~house_farm_patch_coord(11); loc_add($f11, house_farm_patch_11, 0, centrepiece_straight, 2147483647);
+
+// ============================================================
+// PROC — house_setup_place_furniture (used by house_setup_locs)
+// ============================================================
+
+[proc,house_setup_place_furniture](int $rtype, int $rfurn, int $plot)
+def_coord $pos = ~house_plot_coord($plot);
+if ($rtype = 1) {
+    if ($rfurn = 2)      { loc_add($pos, house_fourposter_bed,  0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 1) { loc_add($pos, house_bed,            0, centrepiece_straight, 2147483647); }
+    else                 { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 2) {
+    if ($rfurn = 2)      { loc_add($pos, house_steel_range, 0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 1) { loc_add($pos, house_range,       0, centrepiece_straight, 2147483647); }
+    else                 { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 3) {
+    if ($rfurn = 3)      { loc_add($pos, house_teak_table, 0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 2) { loc_add($pos, house_oak_table,  0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 1) { loc_add($pos, house_table,      0, centrepiece_straight, 2147483647); }
+    else                 { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 4) {
+    if ($rfurn >= 1) { loc_add($pos, house_workbench, 0, centrepiece_straight, 2147483647); }
+    else             { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 5) {
+    if ($rfurn >= 1) { loc_add($pos, house_trophy, 0, centrepiece_straight, 2147483647); }
+    else             { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 6) {
+    if ($rfurn = 3)      { loc_add($pos, house_altar_gilded,    0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 2) { loc_add($pos, house_altar_marble,    0, centrepiece_straight, 2147483647); }
+    else if ($rfurn = 1) { loc_add($pos, house_altar_limestone, 0, centrepiece_straight, 2147483647); }
+    else                 { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+if ($rtype = 7) {
+    if ($rfurn >= 1) { loc_add($pos, house_portal, 0, centrepiece_straight, 2147483647); }
+    else             { ~house_place_ghost($pos, $rtype); }
+    return;
+}
+
+// ============================================================
+// FARM PROCS
+// ============================================================
+
+[proc,house_farm_plant_menu](int $patch)
+~house_farm_try_grow($patch);
+def_int $stage = ~house_farm_get_stage($patch);
+if ($stage > 0) {
+    ~house_farm_inspect($patch);
+    return;
+}
+def_int $ptype = ~p_choice3("Plant Herbs", 1, "Plant Trees", 2, "Cancel", 0);
+if ($ptype = 0) { return; }
+def_int $fl = stat(farming);
+if ($ptype = 1) { ~house_farm_herb_menu($patch, $fl); return; }
+def_int $cl = stat(construction);
+~house_farm_tree_menu($patch, $fl, $cl);
+
+[proc,house_farm_herb_menu](int $patch, int $fl)
+if ($fl < 26) {
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, 1);
+    mes("You plant harralander seeds.");
+    return;
+}
+if ($fl < 32) {
+    def_int $h1 = ~p_choice3("Harralander (L1)", 1, "Ranarr (L26)", 2, "Cancel", 0);
+    if ($h1 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $h1);
+    ~house_farm_planted_msg($h1);
+    return;
+}
+if ($fl < 44) {
+    def_int $h2 = ~p_choice4("Harralander (L1)", 1, "Ranarr (L26)", 2, "Irit (L32)", 3, "Cancel", 0);
+    if ($h2 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $h2);
+    ~house_farm_planted_msg($h2);
+    return;
+}
+if ($fl < 54) {
+    def_int $h3 = ~p_choice5("Ranarr (L26)", 2, "Irit (L32)", 3, "Avantoe (L44)", 4, "Harralander (L1)", 1, "Cancel", 0);
+    if ($h3 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $h3);
+    ~house_farm_planted_msg($h3);
+    return;
+}
+if ($fl < 65) {
+    def_int $h4 = ~p_choice5("Irit (L32)", 3, "Avantoe (L44)", 4, "Kwuarm (L54)", 5, "Ranarr (L26)", 2, "Cancel", 0);
+    if ($h4 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $h4);
+    ~house_farm_planted_msg($h4);
+    return;
+}
+if ($fl < 75) {
+    def_int $h5 = ~p_choice5("Avantoe (L44)", 4, "Kwuarm (L54)", 5, "Cadantine (L65)", 6, "Irit (L32)", 3, "Cancel", 0);
+    if ($h5 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $h5);
+    ~house_farm_planted_msg($h5);
+    return;
+}
+def_int $h6 = ~p_choice5("Kwuarm (L54)", 5, "Cadantine (L65)", 6, "Torstol (L75)", 7, "Avantoe (L44)", 4, "Cancel", 0);
+if ($h6 = 0) { return; }
+anim(human_dig, 0);
+~house_farm_do_plant($patch, $h6);
+~house_farm_planted_msg($h6);
+
+[proc,house_farm_tree_menu](int $patch, int $fl, int $cl)
+def_int $minlvl = $fl;
+if ($cl < $minlvl) { $minlvl = $cl; }
+if ($minlvl < 15) {
+    mes("You need at least level 15 in both Farming and Woodcutting to grow trees here.");
+    return;
+}
+if ($minlvl < 30) {
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, 10);
+    mes("You plant a young oak sapling.");
+    return;
+}
+if ($minlvl < 45) {
+    def_int $t1 = ~p_choice3("Oak (L15)", 10, "Willow (L30)", 11, "Cancel", 0);
+    if ($t1 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $t1);
+    ~house_farm_tree_planted_msg($t1);
+    return;
+}
+if ($minlvl < 60) {
+    def_int $t2 = ~p_choice4("Oak (L15)", 10, "Willow (L30)", 11, "Maple (L45)", 12, "Cancel", 0);
+    if ($t2 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $t2);
+    ~house_farm_tree_planted_msg($t2);
+    return;
+}
+if ($minlvl < 75) {
+    def_int $t3 = ~p_choice5("Willow (L30)", 11, "Maple (L45)", 12, "Yew (L60)", 13, "Oak (L15)", 10, "Cancel", 0);
+    if ($t3 = 0) { return; }
+    anim(human_dig, 0);
+    ~house_farm_do_plant($patch, $t3);
+    ~house_farm_tree_planted_msg($t3);
+    return;
+}
+def_int $t4 = ~p_choice5("Maple (L45)", 12, "Yew (L60)", 13, "Magic (L75)", 14, "Willow (L30)", 11, "Cancel", 0);
+if ($t4 = 0) { return; }
+anim(human_dig, 0);
+~house_farm_do_plant($patch, $t4);
+~house_farm_tree_planted_msg($t4);
+
+[proc,house_farm_planted_msg](int $crop)
+switch_int($crop) {
+    case 1 : mes("You plant harralander seeds.");
+    case 2 : mes("You plant ranarr seeds.");
+    case 3 : mes("You plant irit seeds.");
+    case 4 : mes("You plant avantoe seeds.");
+    case 5 : mes("You plant kwuarm seeds.");
+    case 6 : mes("You plant cadantine seeds.");
+    case 7 : mes("You plant torstol seeds.");
+}
+
+[proc,house_farm_tree_planted_msg](int $crop)
+switch_int($crop) {
+    case 10 : mes("You plant a young oak sapling.");
+    case 11 : mes("You plant a young willow sapling.");
+    case 12 : mes("You plant a young maple sapling.");
+    case 13 : mes("You plant a young yew sapling.");
+    case 14 : mes("You plant a magic tree sapling. These take a very long time to grow...");
+}
+
+[proc,house_farm_do_plant](int $patch, int $croptype)
+~house_farm_set_crop($patch, $croptype);
+~house_farm_set_stage($patch, 1);
+~house_farm_set_planted($patch, map_clock);
+
+[proc,house_farm_inspect](int $patch)
+~house_farm_try_grow($patch);
+def_int $stage = ~house_farm_get_stage($patch);
+def_int $crop = ~house_farm_get_crop($patch);
+if ($stage = 0) {
+    mes("The patch is empty. Click it to plant herbs or trees.");
+    return;
+}
+if ($stage = 2) {
+    mes("Your crop is fully grown and ready to harvest! Right-click to Harvest.");
+    return;
+}
+switch_int($crop) {
+    case 1  : mes("Harralander is growing here. Check back soon.");
+    case 2  : mes("Ranarr weed is growing here.");
+    case 3  : mes("Irit herb is growing here.");
+    case 4  : mes("Avantoe is growing here.");
+    case 5  : mes("Kwuarm is growing here.");
+    case 6  : mes("Cadantine is growing here.");
+    case 7  : mes("Torstol is growing here.");
+    case 10 : mes("A young oak tree is growing here.");
+    case 11 : mes("A willow tree is taking root here.");
+    case 12 : mes("A maple tree is growing here. These take a while.");
+    case 13 : mes("A yew tree is growing here. Very slow-growing.");
+    case 14 : mes("A magic tree sapling is here. These take a very long time to mature...");
+}
+
+[proc,house_farm_harvest](int $patch)
+~house_farm_try_grow($patch);
+def_int $stage = ~house_farm_get_stage($patch);
+if ($stage ! 2) {
+    if ($stage = 0) { mes("There is nothing to harvest here."); }
+    else { mes("Your crop is not ready yet. Come back later."); }
+    return;
+}
+if (inv_freespace(inv) < 1) {
+    mes("Your inventory is too full to harvest.");
+    return;
+}
+def_int $crop = ~house_farm_get_crop($patch);
+anim(human_pickupfloor, 0);
+~house_farm_give_harvest($crop);
+~house_farm_set_stage($patch, 0);
+~house_farm_set_planted($patch, 0);
+~house_farm_set_crop($patch, 0);
+
+[proc,house_farm_give_harvest](int $crop)
+switch_int($crop) {
+    case 1  : inv_add(inv, harralander, 1);            stat_advance(farming, 1000);  mes("You harvest a harralander herb.");
+    case 2  : inv_add(inv, unidentified_ranarr, 1);    stat_advance(farming, 2500);  mes("You harvest a ranarr herb.");
+    case 3  : inv_add(inv, unidentified_irit, 1);      stat_advance(farming, 4000);  mes("You harvest an irit herb.");
+    case 4  : inv_add(inv, unidentified_avantoe, 1);   stat_advance(farming, 5500);  mes("You harvest an avantoe herb.");
+    case 5  : inv_add(inv, unidentified_kwuarm, 1);    stat_advance(farming, 7000);  mes("You harvest a kwuarm herb.");
+    case 6  : inv_add(inv, unidentified_cadantine, 1); stat_advance(farming, 8500);  mes("You harvest a cadantine herb.");
+    case 7  : inv_add(inv, unidentified_torstol, 1);   stat_advance(farming, 10000); mes("You harvest a torstol herb.");
+    case 10 : inv_add(inv, oak_logs, 5);    stat_advance(farming, 2000);  mes("You chop down the oak tree and collect 5 logs.");
+    case 11 : inv_add(inv, willow_logs, 5); stat_advance(farming, 3000);  mes("You chop down the willow tree and collect 5 logs.");
+    case 12 : inv_add(inv, maple_logs, 5);  stat_advance(farming, 5000);  mes("You chop down the maple tree and collect 5 logs.");
+    case 13 : inv_add(inv, yew_logs, 5);    stat_advance(farming, 8000);  mes("You chop down the yew tree and collect 5 logs.");
+    case 14 : inv_add(inv, magic_logs, 5);  stat_advance(farming, 12000); mes("You chop down the magic tree and collect 5 logs.");
+}
+
+[proc,house_farm_clear](int $patch)
+def_int $stage = ~house_farm_get_stage($patch);
+if ($stage = 0) { mes("The patch is already empty."); return; }
+anim(human_dig, 0);
+~house_farm_set_stage($patch, 0);
+~house_farm_set_planted($patch, 0);
+~house_farm_set_crop($patch, 0);
+mes("You clear the patch.");
+
+[proc,house_farm_try_grow](int $patch)
+def_int $stage = ~house_farm_get_stage($patch);
+if ($stage = 0 | $stage = 2) { return; }
+def_int $crop = ~house_farm_get_crop($patch);
+def_int $growtime = ~house_farm_crop_grow_ticks($crop);
+def_int $planted = ~house_farm_get_planted($patch);
+def_int $elapsed = calc(map_clock - $planted);
+if ($elapsed >= $growtime) {
+    ~house_farm_set_stage($patch, 2);
+}
+
+[proc,house_farm_crop_grow_ticks](int $crop)(int)
+switch_int($crop) {
+    case 1  : return (300);
+    case 2  : return (300);
+    case 3  : return (300);
+    case 4  : return (300);
+    case 5  : return (300);
+    case 6  : return (300);
+    case 7  : return (300);
+    case 10 : return (600);
+    case 11 : return (900);
+    case 12 : return (1200);
+    case 13 : return (1800);
+    case 14 : return (2500);
+    case default : return (300);
+}
+
+// ============================================================
+// FARM VARP ACCESSORS (patches 0-11)
+// ============================================================
+
+[proc,house_farm_get_stage](int $patch)(int)
+switch_int($patch) {
+    case 0  : return (%house_farm_stage_0);
+    case 1  : return (%house_farm_stage_1);
+    case 2  : return (%house_farm_stage_2);
+    case 3  : return (%house_farm_stage_3);
+    case 4  : return (%house_farm_stage_4);
+    case 5  : return (%house_farm_stage_5);
+    case 6  : return (%house_farm_stage_6);
+    case 7  : return (%house_farm_stage_7);
+    case 8  : return (%house_farm_stage_8);
+    case 9  : return (%house_farm_stage_9);
+    case 10 : return (%house_farm_stage_10);
+    case 11 : return (%house_farm_stage_11);
+    case default : return (0);
+}
+
+[proc,house_farm_set_stage](int $patch, int $stage)
+switch_int($patch) {
+    case 0  : %house_farm_stage_0  = $stage;
+    case 1  : %house_farm_stage_1  = $stage;
+    case 2  : %house_farm_stage_2  = $stage;
+    case 3  : %house_farm_stage_3  = $stage;
+    case 4  : %house_farm_stage_4  = $stage;
+    case 5  : %house_farm_stage_5  = $stage;
+    case 6  : %house_farm_stage_6  = $stage;
+    case 7  : %house_farm_stage_7  = $stage;
+    case 8  : %house_farm_stage_8  = $stage;
+    case 9  : %house_farm_stage_9  = $stage;
+    case 10 : %house_farm_stage_10 = $stage;
+    case 11 : %house_farm_stage_11 = $stage;
+}
+
+[proc,house_farm_get_planted](int $patch)(int)
+switch_int($patch) {
+    case 0  : return (%house_farm_planted_0);
+    case 1  : return (%house_farm_planted_1);
+    case 2  : return (%house_farm_planted_2);
+    case 3  : return (%house_farm_planted_3);
+    case 4  : return (%house_farm_planted_4);
+    case 5  : return (%house_farm_planted_5);
+    case 6  : return (%house_farm_planted_6);
+    case 7  : return (%house_farm_planted_7);
+    case 8  : return (%house_farm_planted_8);
+    case 9  : return (%house_farm_planted_9);
+    case 10 : return (%house_farm_planted_10);
+    case 11 : return (%house_farm_planted_11);
+    case default : return (0);
+}
+
+[proc,house_farm_set_planted](int $patch, int $tick)
+switch_int($patch) {
+    case 0  : %house_farm_planted_0  = $tick;
+    case 1  : %house_farm_planted_1  = $tick;
+    case 2  : %house_farm_planted_2  = $tick;
+    case 3  : %house_farm_planted_3  = $tick;
+    case 4  : %house_farm_planted_4  = $tick;
+    case 5  : %house_farm_planted_5  = $tick;
+    case 6  : %house_farm_planted_6  = $tick;
+    case 7  : %house_farm_planted_7  = $tick;
+    case 8  : %house_farm_planted_8  = $tick;
+    case 9  : %house_farm_planted_9  = $tick;
+    case 10 : %house_farm_planted_10 = $tick;
+    case 11 : %house_farm_planted_11 = $tick;
+}
+
+[proc,house_farm_get_crop](int $patch)(int)
+switch_int($patch) {
+    case 0  : return (%house_farm_crop_0);
+    case 1  : return (%house_farm_crop_1);
+    case 2  : return (%house_farm_crop_2);
+    case 3  : return (%house_farm_crop_3);
+    case 4  : return (%house_farm_crop_4);
+    case 5  : return (%house_farm_crop_5);
+    case 6  : return (%house_farm_crop_6);
+    case 7  : return (%house_farm_crop_7);
+    case 8  : return (%house_farm_crop_8);
+    case 9  : return (%house_farm_crop_9);
+    case 10 : return (%house_farm_crop_10);
+    case 11 : return (%house_farm_crop_11);
+    case default : return (0);
+}
+
+[proc,house_farm_set_crop](int $patch, int $croptype)
+switch_int($patch) {
+    case 0  : %house_farm_crop_0  = $croptype;
+    case 1  : %house_farm_crop_1  = $croptype;
+    case 2  : %house_farm_crop_2  = $croptype;
+    case 3  : %house_farm_crop_3  = $croptype;
+    case 4  : %house_farm_crop_4  = $croptype;
+    case 5  : %house_farm_crop_5  = $croptype;
+    case 6  : %house_farm_crop_6  = $croptype;
+    case 7  : %house_farm_crop_7  = $croptype;
+    case 8  : %house_farm_crop_8  = $croptype;
+    case 9  : %house_farm_crop_9  = $croptype;
+    case 10 : %house_farm_crop_10 = $croptype;
+    case 11 : %house_farm_crop_11 = $croptype;
+}

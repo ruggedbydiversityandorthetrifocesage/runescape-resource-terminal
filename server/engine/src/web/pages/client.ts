@@ -70,28 +70,28 @@ export function handleCacheEndpoints(url: URL): Response | null {
         return new Response(Buffer.from(CrcBuffer.data));
     }
     if (url.pathname.startsWith('/title')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 1)!));
+        return new Response(Bun.file('data/pack/client/title'));
     }
     if (url.pathname.startsWith('/config')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 2)!));
+        return new Response(Bun.file('data/pack/client/config'));
     }
     if (url.pathname.startsWith('/interface')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 3)!));
+        return new Response(Bun.file('data/pack/client/interface'));
     }
     if (url.pathname.startsWith('/media')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 4)!));
+        return new Response(Bun.file('data/pack/client/media'));
     }
     if (url.pathname.startsWith('/versionlist')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 5)!));
+        return new Response(Bun.file('data/pack/client/versionlist'));
     }
     if (url.pathname.startsWith('/textures')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 6)!));
+        return new Response(Bun.file('data/pack/client/textures'));
     }
     if (url.pathname.startsWith('/wordenc')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 7)!));
+        return new Response(Bun.file('data/pack/client/wordenc'));
     }
     if (url.pathname.startsWith('/sounds')) {
-        return new Response(Buffer.from(OnDemand.cache.read(0, 8)!));
+        return new Response(Bun.file('data/pack/client/sounds'));
     }
     if (url.pathname.startsWith('/ondemand.zip')) {
         return new Response(Bun.file('data/pack/ondemand.zip'));

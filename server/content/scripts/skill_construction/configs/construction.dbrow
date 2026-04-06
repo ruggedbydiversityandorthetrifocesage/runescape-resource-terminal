@@ -1,0 +1,10 @@
+// House portals - entry points for player-owned houses
+// Portals exist in the rev 225 loc.pack as wiztowerportal etc.
+// Using magic_portal (id 739) which exists in the cache as a placeholder
+// until house portal locs are added in a future cache update.
+[house_portal_rimmington]
+table=construction_objects
+data=object,magic_portal
+data=level_required,1
+data=xp,1
+data=name,House Portal

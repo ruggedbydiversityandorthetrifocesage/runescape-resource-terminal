@@ -1,0 +1,23 @@
+// Falador herb patch - south of Falador
+[falador_herb_patch]
+table=farming_patches
+data=patch_loc,herb_patch_falador
+data=xp_harvest,2400
+data=product,unidentified_ranarr
+data=levelrequired,32
+
+// Catherby herb patch - east of Catherby
+[catherby_herb_patch]
+table=farming_patches
+data=patch_loc,herb_patch_catherby
+data=xp_harvest,2050
+data=product,unidentified_irit
+data=levelrequired,44
+
+// Ardougne herb patch - east Ardougne
+[ardougne_herb_patch]
+table=farming_patches
+data=patch_loc,herb_patch_ardougne
+data=xp_harvest,1500
+data=product,unidentified_harralander
+data=levelrequired,26

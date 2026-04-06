@@ -56,3 +56,5 @@ if ($random < 1) {
 } else if ($random < 120) {
     obj_add(npc_coord, cabbage, 1, ^lootdrop_duration);
 }
+// Slayer task tracking
+~slayer_check_kill(4, 5);

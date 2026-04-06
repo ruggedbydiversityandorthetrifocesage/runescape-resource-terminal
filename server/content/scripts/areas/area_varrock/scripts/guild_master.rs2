@@ -10,8 +10,7 @@ if (%dragonquest = ^quest_dragon_not_started) {
 }
 
 ~chatplayer("<p,quiz>What is this place?");
-// rsc (not including typos) & osrs
-~chatnpc("<p,neutral>This is the Champions' Guild. Only adventurers who have proved themselves worthy by gaining influence from quests are allowed in here.");
+~chatnpc("<p,neutral>This is the Champions' Guild. A place for those bold enough to take on the greatest challenges Gielinor has to offer.");
 
 
 // most guides say that the guild master mentions oziach

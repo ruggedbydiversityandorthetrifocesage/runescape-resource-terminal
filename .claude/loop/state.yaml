@@ -1,0 +1,39 @@
+status: waiting_user_input
+session_name: rs2-cache-converter
+cycle: 0
+max_cycles: 3
+inner_retries: 0
+max_inner_retries: 5
+worktree_path: ./.claude/worktrees/loop-rs2-cache-converter
+worktree_branch: loop/rs2-cache-converter
+pr_url: ""
+pr_number: ""
+builder_model: inherit
+reviewer_model: inherit
+started_at: 2026-04-02T21:21:38Z
+current_phase: challenge
+project_type: generic
+max_duration: 60
+tokens_used: 0
+phases_completed: []
+components:
+  contract: false
+  frontend: false
+  backend: true
+execution_plan: ""
+agent_status:
+  opnet-contract-dev: pending
+  opnet-frontend-dev: pending
+  opnet-backend-dev: pending
+  opnet-auditor: pending
+  opnet-deployer: pending
+  opnet-ui-tester: pending
+  loop-reviewer: pending
+current_step: 0
+audit_verdict: ""
+audit_cycles: 0
+deployment_address: ""
+deployment_network: ""
+redispatch_count: {}
+issues_resolved: 0
+issues_deferred: 0

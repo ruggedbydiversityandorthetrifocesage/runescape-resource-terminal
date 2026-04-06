@@ -1,0 +1,181 @@
+// Farming skill - herb patches (free resource, no seeds or tools required)
+// Growth stages stored in per-patch varps:
+//   stage varp: 0=empty, 1=growing, 2=ready
+//   planted varp: map_clock tick when planting started
+// Stage advances:
+//   1->2 after 500 ticks (~5 minutes)
+//
+// Products scale with farming level:
+//   Level  1-25: harralander (1,000 XP)
+//   Level 26-31: ranarr      (2,500 XP)
+//   Level 32-43: irit        (4,000 XP)
+//   Level 44+:   kwuarm      (7,000 XP)
+//
+// Op1 = Plant/Tend (auto-plants if empty, reports status otherwise)
+// Op3 = Harvest
+// Op5 = Guide
+
+// --- op1: Plant / Tend (no items required) ---
+[oploc1,herb_patch_falador]
+@farming_tend_patch;
+
+[oploc1,herb_patch_catherby]
+@farming_tend_patch;
+
+[oploc1,herb_patch_ardougne]
+@farming_tend_patch;
+
+[label,farming_tend_patch]
+~farming_try_advance_growth;
+def_int $stage = ~farming_get_stage;
+if ($stage = 0) {
+    // Auto-plant — no seeds or tools needed
+    anim(human_dig, 0);
+    ~farming_set_stage(1);
+    ~farming_set_planted(map_clock);
+    mes("You tend to the patch and plant some seeds.");
+    return;
+}
+if ($stage = 1) {
+    mes("Your crop is growing. Come back in a few minutes to harvest.");
+    return;
+}
+// Stage 2 = ready — guide player to harvest
+mes("Your crop is ready to harvest! Right-click and select Harvest.");
+
+// --- op2: (unused, but bound so clients don't error) ---
+[oploc2,herb_patch_falador]
+@farming_inspect_patch;
+
+[oploc2,herb_patch_catherby]
+@farming_inspect_patch;
+
+[oploc2,herb_patch_ardougne]
+@farming_inspect_patch;
+
+[label,farming_inspect_patch]
+~farming_try_advance_growth;
+def_int $stage = ~farming_get_stage;
+switch_int($stage) {
+    case 0 : mes("The patch is empty. Click it to plant.");
+    case 1 : mes("A crop is growing here.");
+    case 2 : mes("The crop is ready to harvest!");
+}
+
+// --- op3: Harvest ---
+[oploc3,herb_patch_falador]
+@farming_harvest_patch;
+
+[oploc3,herb_patch_catherby]
+@farming_harvest_patch;
+
+[oploc3,herb_patch_ardougne]
+@farming_harvest_patch;
+
+[label,farming_harvest_patch]
+~farming_try_advance_growth;
+def_int $stage = ~farming_get_stage;
+if ($stage ! 2) {
+    if ($stage = 0) {
+        mes("The patch is empty. Click it to plant.");
+    } else {
+        mes("The crop is not ready to harvest yet.");
+    }
+    return;
+}
+if (inv_freespace(inv) < 1) {
+    mes("Your inventory is too full to harvest.");
+    return;
+}
+// Product and XP scale with farming level — no level requirement to plant,
+// just to get better herbs on harvest.
+def_int $farm_level = stat(farming);
+anim(human_pickupfloor, 0);
+if ($farm_level >= 44) {
+    inv_add(inv, unidentified_kwuarm, 1);
+    stat_advance(farming, 7000);
+    mes("You harvest a kwuarm herb.");
+} else if ($farm_level >= 32) {
+    inv_add(inv, unidentified_irit, 1);
+    stat_advance(farming, 4000);
+    mes("You harvest an irit herb.");
+} else if ($farm_level >= 26) {
+    inv_add(inv, unidentified_ranarr, 1);
+    stat_advance(farming, 2500);
+    mes("You harvest a ranarr herb.");
+} else {
+    inv_add(inv, harralander, 1);
+    stat_advance(farming, 1000);
+    mes("You harvest a harralander herb.");
+}
+~farming_set_stage(0);
+~farming_set_planted(0);
+
+// --- oplocu: Use item on patch (legacy, just redirect to plant) ---
+[oplocu,herb_patch_falador]
+@farming_tend_patch;
+
+[oplocu,herb_patch_catherby]
+@farming_tend_patch;
+
+[oplocu,herb_patch_ardougne]
+@farming_tend_patch;
+
+// --- op5: Guide ---
+[oploc5,herb_patch_falador]
+@farming_guide;
+
+[oploc5,herb_patch_catherby]
+@farming_guide;
+
+[oploc5,herb_patch_ardougne]
+@farming_guide;
+
+[label,farming_guide]
+mes("This is a herb patch. Click it to plant — no seeds required.");
+mes("Crops take about 5 minutes to grow, then right-click to Harvest.");
+mes("Higher Farming levels yield better herbs and more XP on harvest.");
+
+// --- Growth proc ---
+[proc,farming_try_advance_growth]
+def_int $stage = ~farming_get_stage;
+if ($stage = 0 | $stage = 2) {
+    return;
+}
+def_int $planted_tick = ~farming_get_planted;
+def_int $elapsed = calc(map_clock - $planted_tick);
+if ($stage = 1 & $elapsed >= 500) {
+    ~farming_set_stage(2);
+}
+
+// --- Per-loc varp accessors ---
+
+[proc,farming_get_stage]()(int)
+switch_loc(loc_type) {
+    case herb_patch_falador : return (%falador_herb_patch_stage);
+    case herb_patch_catherby : return (%catherby_herb_patch_stage);
+    case herb_patch_ardougne : return (%ardougne_herb_patch_stage);
+    case default : return (0);
+}
+
+[proc,farming_set_stage](int $stage)
+switch_loc(loc_type) {
+    case herb_patch_falador : %falador_herb_patch_stage = $stage;
+    case herb_patch_catherby : %catherby_herb_patch_stage = $stage;
+    case herb_patch_ardougne : %ardougne_herb_patch_stage = $stage;
+}
+
+[proc,farming_get_planted]()(int)
+switch_loc(loc_type) {
+    case herb_patch_falador : return (%falador_herb_patch_planted);
+    case herb_patch_catherby : return (%catherby_herb_patch_planted);
+    case herb_patch_ardougne : return (%ardougne_herb_patch_planted);
+    case default : return (0);
+}
+
+[proc,farming_set_planted](int $tick)
+switch_loc(loc_type) {
+    case herb_patch_falador : %falador_herb_patch_planted = $tick;
+    case herb_patch_catherby : %catherby_herb_patch_planted = $tick;
+    case herb_patch_ardougne : %ardougne_herb_patch_planted = $tick;
+}

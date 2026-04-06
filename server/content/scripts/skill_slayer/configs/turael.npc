@@ -1,0 +1,20 @@
+// Turael - NPC ID 70 in Rev412
+// Rev412 models: [208, 251, 3379, 317, 174, 179, 274, 185, 555] (all in ondemand.zip)
+[turael]
+vislevel=hide
+name=Turael
+desc=The local Slayer Master.
+walkanim=human_walk_f,human_walk_b,human_walk_l,human_walk_r
+readyanim=human_ready
+op1=Talk-to
+op4=Trade
+model1=model_208_npc
+model2=model_251_idk
+model3=model_3379_obj_wear
+model4=model_317_npc
+model5=model_174_npc
+model6=model_179_obj_wear
+model7=model_274_idk
+model8=model_185_obj_wear
+model9=model_555_npc
+hitpoints=10

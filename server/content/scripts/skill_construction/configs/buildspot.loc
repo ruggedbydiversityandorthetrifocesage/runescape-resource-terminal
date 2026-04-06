@@ -1,0 +1,583 @@
+// Buildspot — glowing circle placed at furniture slots in a player's house.
+// 5 distinct types (buildspot_0..4) so RuneScript can dispatch each slot
+// independently. All look identical — same model/anim/flags.
+
+[buildspot_0]
+name=Build spot
+desc=An empty spot where you can build a chair.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+[buildspot_1]
+name=Build spot
+desc=An empty spot where you can build a table.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+[buildspot_2]
+name=Build spot
+desc=An empty spot where you can build a bookcase.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+[buildspot_3]
+name=Build spot
+desc=An empty spot where you can build a bed.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+[buildspot_4]
+name=Build spot
+desc=An empty spot where you can build a dresser.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+// Buildspot 5 — prayer altar corner (+10,+3)
+[buildspot_5]
+name=Build spot
+desc=An empty spot where you can build a prayer altar.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=18724
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+// Buildspot 6 — portal alcove (+2,+9, near entrance)
+[buildspot_6]
+name=Build spot
+desc=An empty spot where you can build a portal frame.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=49344
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+
+// House farming patch — recoloured glowing circle (green tint).
+// 3 distinct types for per-patch varp dispatch.
+[house_herb_patch_0]
+name=Herb patch
+desc=A private herb patch in your house garden.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=7799
+blockrange=no
+blockwalk=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_herb_patch_1]
+name=Herb patch
+desc=A private herb patch in your house garden.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=7799
+blockrange=no
+blockwalk=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_herb_patch_2]
+name=Herb patch
+desc=A private herb patch in your house garden.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=7799
+blockrange=no
+blockwalk=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+// Room plot spots — 3x3 grid (blue tint, op1=Build Room)
+[room_plot_0]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_1]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_2]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_3]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_4]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_5]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_6]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_7]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+[room_plot_8]
+name=Room plot
+desc=An empty plot. Click to select a room type.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build Room
+
+// Room furniture spots — 3x3 grid (op1=Build, op2=Demolish Room)
+[room_furn_0]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_1]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_2]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_3]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_4]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_5]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_6]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_7]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[room_furn_8]
+name=Furniture spot
+desc=Click to build furniture for this room.
+model=model_loc_740
+anim=glowingcircle
+ambient=100
+contrast=100
+hasalpha=yes
+recol1s=29490
+recol1d=45000
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+// House farm patches 0-11 — use real Rev412 farming patch models
+// farming_patch_empty_herb = tilled soil (ID 7794), farming_patch_surround_a = stone border (ID 7766)
+[house_farm_patch_0]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_1]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_2]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_3]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_4]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_5]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_6]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_7]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_8]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_9]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_10]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear
+
+[house_farm_patch_11]
+name=Herb Patch
+desc=A private farming patch in your house garden.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+blockrange=no
+active=yes
+op1=Plant
+op2=Inspect
+op3=Harvest
+op4=Clear

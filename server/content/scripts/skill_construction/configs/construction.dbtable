@@ -1,0 +1,5 @@
+[construction_objects]
+column=object,loc,INDEXED,REQUIRED
+column=level_required,int
+column=xp,int
+column=name,string

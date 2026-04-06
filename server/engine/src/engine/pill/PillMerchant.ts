@@ -12,14 +12,80 @@ import { getTutorialStep, setTutorialStep, TUTORIAL_TREE_X, TUTORIAL_TREE_Z } fr
 // OPNet OP20 token bridge
 // Paste the deployed tb1p... contract address below:
 // ============================================================
-export const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
+export const RST_CONTRACT = 'opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw'; // v9 live testnet
 export const RST_GP_PER_TOKEN = 1000; // 1,000 GP = 1 RST
 export const FIRST_CLAIM_GP_MIN = 1000;      // first ever claim: 1,000 GP minimum
 export const SUBSEQUENT_CLAIM_GP_MIN = 10000; // all subsequent claims: 10,000 GP minimum
 
+// Combat NPC kill GP rewards
 // Cow NPC type IDs: 81=cow, 397=cow2, 955=cow3
 export const COW_NPC_IDS = new Set([81, 397, 955]);
-export const COW_KILL_GP = 100; // 0.1 RST per cow kill (at 1,000 GP/RST)
+
+// Giants — type 91=mossgiant, type 94=giant (Hill Giant)
+// Kill GP is direct (not through merchant, unaffected by Tier 2 price multiplier)
+export const HILL_GIANT_NPC_IDS = new Set([94]);
+export const MOSS_GIANT_NPC_IDS = new Set([91]);
+export const HILL_GIANT_KILL_GP = 250;  // 0.25 RST
+export const MOSS_GIANT_KILL_GP = 500;  // 0.5 RST
+
+export function awardGiantKillGP(username: string, gp: number, type: 'hill' | 'moss'): void {
+    const prev = pendingGP.get(username) ?? 0;
+    pendingGP.set(username, prev + gp);
+    const prevTotal = totalGPConverted.get(username) ?? 0;
+    totalGPConverted.set(username, prevTotal + gp);
+    recordActivity(username, gp);
+    savePending();
+    saveLeaderboard();
+    console.log('[RST] ' + (type === 'moss' ? 'Moss' : 'Hill') + ' Giant kill: +' + gp + ' GP for ' + username);
+}
+export const COW_KILL_GP = 10;     // 10 GP per cow kill
+export const CHICKEN_KILL_GP = 5;  // 5 GP per chicken kill (raw chicken selling price)
+
+// ============================================================
+// Dragon Slayer Milestone — community earn threshold
+// When total GP converted across ALL players crosses this,
+// Dragon Slayer quest unlocks and Tier 2 economy activates.
+// ============================================================
+export const DRAGON_SLAYER_THRESHOLD_GP = 10_000_000; // 10,000 RST worth of gameplay
+export const TIER2_PRICE_MULTIPLIER = 0.1;            // Tier 2: resources worth 10% of Tier 1
+const DRAGON_SLAYER_PATH = 'data/dragon-slayer-enabled.json';
+let dragonSlayerEnabled = false;
+
+(function loadDragonSlayerState() {
+    try {
+        if (fs.existsSync(DRAGON_SLAYER_PATH)) {
+            const raw = JSON.parse(fs.readFileSync(DRAGON_SLAYER_PATH, 'utf8'));
+            dragonSlayerEnabled = !!raw.enabled;
+            if (dragonSlayerEnabled) console.log('[RST] 🐉 Dragon Slayer milestone already achieved — Tier 2 active');
+        }
+    } catch { /* ignore */ }
+})();
+
+export function isDragonSlayerEnabled(): boolean { return dragonSlayerEnabled; }
+
+export function getTotalCommunityGP(): number {
+    let total = 0;
+    for (const gp of totalGPConverted.values()) total += gp;
+    return total;
+}
+
+function checkDragonSlayerMilestone(): void {
+    if (dragonSlayerEnabled) return;
+    const total = getTotalCommunityGP();
+    if (total >= DRAGON_SLAYER_THRESHOLD_GP) {
+        dragonSlayerEnabled = true;
+        try {
+            fs.mkdirSync(path.dirname(DRAGON_SLAYER_PATH), { recursive: true });
+            fs.writeFileSync(DRAGON_SLAYER_PATH, JSON.stringify({ enabled: true, achievedAt: Date.now(), totalGP: total }));
+        } catch { /* ignore */ }
+        console.log('[RST] 🐉 DRAGON SLAYER MILESTONE REACHED! ' + total + ' GP converted — Tier 2 economy active!');
+        // Broadcast to all connected SSE clients
+        const msg = JSON.stringify({ type: 'dragon_slayer_unlocked', totalGP: total });
+        for (const [, ctrl] of sseClients) {
+            try { ctrl.enqueue(encoder.encode('data: ' + msg + '\n\n')); } catch { /* ignore */ }
+        }
+    }
+}
 
 const RESOURCE_PRICES: Record<number, number> = {
     // Logs
@@ -37,9 +103,9 @@ const RESOURCE_PRICES: Record<number, number> = {
     447: 150,   // mithril ore
     449: 200,   // adamantite ore
     451: 400,   // runite ore
-    // Meat — Tier 0 combat drops (opportunity cost: could eat instead)
-    2132: 10,   // raw beef
-    2138: 10,   // raw chicken
+    // Meat — Tier 0 combat drops
+    2132: 5,    // raw beef  (cow)
+    2138: 5,    // raw chicken
     // Fish (raw) — Tier 1 gathering
     317: 5,     // raw shrimp
     321: 8,     // raw anchovies
@@ -78,10 +144,30 @@ export const stakedRegistry = new Map<string, number>();    // username → stak
 export const earnedRewardsRegistry = new Map<string, number>(); // wallet → cumulative sRST rewards claimed (RST)
 export const claimedRegistry = new Set<string>();               // usernames who have claimed RST at least once
 
-// Rolling activity log for analytics (last 24h of GP sale events)
+// Rolling activity log for analytics (last 30 days of GP sale events)
 interface ActivityEvent { username: string; gp: number; timestamp: number; }
 export const activityLog: ActivityEvent[] = [];
-const MAX_ACTIVITY_AGE = 24 * 60 * 60 * 1000;
+const MAX_ACTIVITY_AGE = 30 * 24 * 60 * 60 * 1000;
+const ACTIVITY_LOG_PATH = path.resolve('data/activity-log.json');
+
+// Load persisted log on startup
+(function loadActivityLog() {
+    try {
+        if (fs.existsSync(ACTIVITY_LOG_PATH)) {
+            const raw = JSON.parse(fs.readFileSync(ACTIVITY_LOG_PATH, 'utf8'));
+            const cutoff = Date.now() - MAX_ACTIVITY_AGE;
+            for (const e of raw) {
+                if (e.timestamp >= cutoff) activityLog.push(e);
+            }
+        }
+    } catch { /* ignore corrupt file */ }
+})();
+
+// Flush to disk every 5 minutes
+setInterval(() => {
+    try { fs.writeFileSync(ACTIVITY_LOG_PATH, JSON.stringify(activityLog)); } catch { /* ignore */ }
+}, 5 * 60 * 1000);
+
 export function recordActivity(username: string, gp: number): void {
     const now = Date.now();
     activityLog.push({ username, gp, timestamp: now });
@@ -303,6 +389,9 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
     const inv = player.getInventory(93);
     if (!inv) { player.messageGame('Could not access inventory.'); return true; }
 
+    // Tier 2: all resource prices drop 90% once Dragon Slayer milestone is hit
+    const priceMultiplier = dragonSlayerEnabled ? TIER2_PRICE_MULTIPLIER : 1.0;
+
     let saleGP = 0;
     const remove: number[] = [];
     for (let slot = 0; slot < inv.capacity; slot++) {
@@ -316,7 +405,7 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                 price = (RESOURCE_PRICES as any)[objType.certlink];
             }
         }
-        if (price) { saleGP += price * item.count; remove.push(slot); }
+        if (price) { saleGP += Math.max(1, Math.floor(price * priceMultiplier)) * item.count; remove.push(slot); }
     }
 
     if (remove.length === 0) {
@@ -430,6 +519,8 @@ export function handleRSTMerchant(player: NetworkPlayer, npc: Npc): boolean {
                 saveClaimed();
                 // Accumulate 1% fee — flushed by 30-min interval, not here
                 pendingRewardGP += feeGP;
+                // Check Dragon Slayer community milestone
+                checkDragonSlayerMilestone();
                 // Stamp on-chain Bank Log score at each conversion (event-driven, active players only).
                 // Passes per-skill XP for on-chain audit trail: wcXp/25 ≈ logs, mineXp/17.5 ≈ ores.
                 // player.stats[i] stores XP × 10 internally — divide by 10 for real XP.

@@ -441,6 +441,7 @@ export class Client extends GameShell {
     private spotanims: LinkList = new LinkList();
     private objStacks: (LinkList | null)[][][] = new TypedArray3d(CollisionConstants.LEVELS, CollisionConstants.SIZE, CollisionConstants.SIZE, null);
     private locChanges: LinkList = new LinkList();
+    private _locWaitLogged: Set<number> | null = null;
 
     // bfs pathfinder
     private bfsStepX: Int32Array = new Int32Array(4000);
@@ -4180,9 +4181,15 @@ export class Client extends GameShell {
 
         if (this.sceneState === 1) {
             const status = this.checkScene();
-            if (status != 0 && performance.now() - this.sceneLoadStartTime > 360000) {
-                console.log(`${this.username} glcfb ${this.serverSeed},${status},${Client.lowMemory},${this.db},${this.onDemand?.remaining()},${this.currentLevel},${this.sceneCenterZoneX},${this.sceneCenterZoneZ}`);
-                this.sceneLoadStartTime = performance.now();
+            if (status != 0) {
+                const elapsed = performance.now() - this.sceneLoadStartTime;
+                if (elapsed > 5000 && elapsed < 5600) {
+                    console.log(`[SCENE_WAIT] status=${status} remaining=${this.onDemand?.remaining()} center=(${this.sceneCenterZoneX},${this.sceneCenterZoneZ})`);
+                }
+                if (elapsed > 360000) {
+                    console.log(`${this.username} glcfb ${this.serverSeed},${status},${Client.lowMemory},${this.db},${this.onDemand?.remaining()},${this.currentLevel},${this.sceneCenterZoneX},${this.sceneCenterZoneZ}`);
+                    this.sceneLoadStartTime = performance.now();
+                }
             }
         }
 
@@ -4225,12 +4232,14 @@ export class Client extends GameShell {
 
         this.sceneState = 2;
         World.levelBuilt = this.currentLevel;
+        console.log(`[SCENE] sceneState=2 center=(${this.sceneCenterZoneX},${this.sceneCenterZoneZ}) base=(${this.sceneBaseTileX},${this.sceneBaseTileZ}) maps=${this.sceneMapLandData?.length}`);
         this.buildScene();
         return 0;
     }
 
     private buildScene(): void {
         try {
+            console.log('[BUILD] buildScene start');
             this.minimapLevel = -1;
             this.spotanims.clear();
             this.projectiles.clear();
@@ -4495,7 +4504,15 @@ export class Client extends GameShell {
                     loc.startTime--;
                 }
 
+                if (loc.startTime === 0 && loc.x >= 1 && loc.z >= 1 && loc.x <= 102 && loc.z <= 102) {
+                    if (loc.newType >= 0 && !World.isLocReady(loc.newType, loc.newShape)) {
+                        // only log once per type
+                        if (!this._locWaitLogged) this._locWaitLogged = new Set();
+                        if (!this._locWaitLogged.has(loc.newType)) { console.log(`[LOC_WAIT] id=${loc.newType} model not ready`); this._locWaitLogged.add(loc.newType); }
+                    }
+                }
                 if (loc.startTime === 0 && loc.x >= 1 && loc.z >= 1 && loc.x <= 102 && loc.z <= 102 && (loc.newType < 0 || World.isLocReady(loc.newType, loc.newShape))) {
+                    console.log(`[LOC_PLACE] id=${loc.newType} x=${loc.x} z=${loc.z} shape=${loc.newShape} hasHeightmap=${!!this.levelHeightmap}`);
                     this.addLoc(loc.level, loc.x, loc.z, loc.newType, loc.newAngle, loc.newShape, loc.layer);
                     loc.startTime = -1;
 
@@ -9492,6 +9509,7 @@ export class Client extends GameShell {
             const id: number = buf.g2();
 
             if (x >= 0 && z >= 0 && x < CollisionConstants.SIZE && z < CollisionConstants.SIZE) {
+                console.log(`[LOC_ADD] id=${id} x=${x} z=${z} shape=${shape} angle=${angle} sceneState=${this.sceneState}`);
                 this.appendLoc(-1, id, angle, layer, z, shape, this.currentLevel, x, 0);
             }
         } else if (opcode === ServerProt.LOC_DEL) {

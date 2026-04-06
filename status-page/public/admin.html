@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RST Status Admin</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111;
+    --border: #222;
+    --text: #ccc;
+    --muted: #555;
+    --green: #00c853;
+    --red: #ff3d3d;
+    --yellow: #ffd600;
+    --blue: #40c4ff;
+    --accent: #b08d57;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px;
+  }
+  .container { width: 100%; max-width: 520px; }
+  .logo { text-align: center; margin-bottom: 32px; }
+  .logo h1 {
+    font-size: 20px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 4px;
+  }
+  .logo p { color: var(--muted); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  .wallet-addr {
+    font-size: 11px;
+    color: var(--blue);
+    word-break: break-all;
+    padding: 10px;
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    margin: 10px 0;
+  }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: bold;
+  }
+  .badge-ok  { background: #001a0a; border: 1px solid var(--green);  color: var(--green); }
+  .badge-err { background: #1a0000; border: 1px solid var(--red);    color: var(--red); }
+  .badge-off { background: #111;    border: 1px solid var(--border);  color: var(--muted); }
+  button {
+    display: block;
+    width: 100%;
+    background: #1a1400;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 10px 16px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    border-radius: 2px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 12px;
+    transition: background 0.2s;
+  }
+  button:hover:not(:disabled) { background: #2a2000; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger { background: #1a0000; border-color: var(--red); color: var(--red); }
+  button.danger:hover:not(:disabled) { background: #2a0000; }
+  textarea {
+    width: 100%;
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px;
+    font-family: inherit;
+    font-size: 13px;
+    border-radius: 2px;
+    resize: vertical;
+    min-height: 100px;
+    line-height: 1.6;
+    outline: none;
+    margin-top: 10px;
+    transition: border-color 0.2s;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .char-count { font-size: 10px; color: var(--muted); text-align: right; margin-top: 4px; }
+  .msg {
+    padding: 10px 14px;
+    border-radius: 2px;
+    font-size: 12px;
+    margin-top: 12px;
+    display: none;
+    line-height: 1.5;
+  }
+  .msg.show { display: block; }
+  .msg.ok  { background: #001a0a; border: 1px solid var(--green); color: var(--green); }
+  .msg.err { background: #1a0000; border: 1px solid var(--red);   color: var(--red); }
+  .note-preview {
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 40px;
+    color: var(--text);
+    margin-top: 10px;
+  }
+  .note-meta { font-size: 10px; color: var(--muted); margin-top: 6px; }
+  .info-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; }
+  .info-label { color: var(--muted); }
+  .step { display: none; }
+  .step.active { display: block; }
+  .back-link {
+    display: block;
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    letter-spacing: 1px;
+    transition: color 0.2s;
+  }
+  .back-link:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <h1>&#9876; Status Admin</h1>
+    <p>Deployer-only &mdash; Wallet Auth Required</p>
+  </div>
+
+  <!-- Step 1: Connect Wallet -->
+  <div class="card step active" id="step-connect">
+    <div class="card-title">Step 1 &mdash; Connect Deployer Wallet</div>
+    <p style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:14px;">
+      Connect your OP_WALLET. Only the registered deployer address can update the status note.
+    </p>
+    <div id="wallet-status"><span class="badge badge-off">NOT CONNECTED</span></div>
+    <div id="wallet-addr-box" style="display:none">
+      <div class="wallet-addr" id="wallet-addr-text"></div>
+    </div>
+    <button id="btn-connect" onclick="connectWallet()">Connect OP_WALLET</button>
+    <div class="msg" id="connect-msg"></div>
+  </div>
+
+  <!-- Step 2: Edit Note -->
+  <div class="card step" id="step-edit">
+    <div class="card-title">Step 2 &mdash; Update Status Note</div>
+
+    <div style="font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;">Current Note</div>
+    <div class="note-preview" id="current-note"><em style="color:var(--muted)">Loading...</em></div>
+    <div class="note-meta" id="current-note-meta"></div>
+
+    <div style="font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-top:18px;">New Note</div>
+    <textarea id="note-input" maxlength="500"
+      placeholder="e.g. Scheduled maintenance tonight at 22:00 UTC. Down ~30 min."
+      oninput="updateCharCount()"></textarea>
+    <div class="char-count"><span id="char-count">0</span> / 500</div>
+
+    <div style="margin-top:14px;">
+      <div class="info-row">
+        <span class="info-label">Authenticated as</span>
+        <span style="color:var(--blue);font-size:11px;" id="auth-addr"></span>
+      </div>
+    </div>
+
+    <button id="btn-submit" onclick="submitNote()">&#10003; Update Status Note</button>
+    <button class="danger" id="btn-clear" onclick="clearNote()">&#10005; Clear Note</button>
+    <div class="msg" id="submit-msg"></div>
+  </div>
+</div>
+
+<a href="/" class="back-link">&#8592; Back to Status Page</a>
+
+<script>
+var walletAddress = null;
+
+function showMsg(id, text, type) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'msg show ' + type;
+}
+
+function hideMsg(id) {
+  var el = document.getElementById(id);
+  if (el) el.className = 'msg';
+}
+
+function showStep(id) {
+  document.querySelectorAll('.step').forEach(function(el) { el.classList.remove('active'); });
+  var t = document.getElementById(id);
+  if (t) t.classList.add('active');
+}
+
+// Poll for OP_WALLET injection (it loads async)
+function detectWallet() {
+  return new Promise(function(resolve) {
+    if (window.opnet && window.opnet.web3) { resolve(true); return; }
+    var tries = 0;
+    var iv = setInterval(function() {
+      tries++;
+      if (window.opnet && window.opnet.web3) { clearInterval(iv); resolve(true); return; }
+      if (tries >= 20) { clearInterval(iv); resolve(false); }
+    }, 500);
+  });
+}
+
+async function connectWallet() {
+  var btn = document.getElementById('btn-connect');
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  hideMsg('connect-msg');
+
+  var found = await detectWallet();
+  if (!found) {
+    document.getElementById('wallet-status').innerHTML = '<span class="badge badge-err">WALLET NOT FOUND</span>';
+    showMsg('connect-msg', 'OP_WALLET not detected. Install the extension and refresh.', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Connect OP_WALLET';
+    return;
+  }
+
+  try {
+    var accounts = await window.opnet.web3.requestAccounts();
+    if (!accounts || accounts.length === 0) throw new Error('No accounts returned.');
+    walletAddress = accounts[0];
+
+    document.getElementById('wallet-status').innerHTML = '<span class="badge badge-ok">CONNECTED</span>';
+    document.getElementById('wallet-addr-box').style.display = 'block';
+    document.getElementById('wallet-addr-text').textContent = walletAddress;
+    btn.textContent = 'Connected \u2713';
+
+    // Show the edit step — the POST itself will return 403 if wrong address
+    showStep('step-edit');
+    var display = walletAddress.length > 30
+      ? walletAddress.slice(0, 18) + '\u2026' + walletAddress.slice(-8)
+      : walletAddress;
+    document.getElementById('auth-addr').textContent = display;
+    loadCurrentNote();
+
+  } catch (e) {
+    document.getElementById('wallet-status').innerHTML = '<span class="badge badge-err">FAILED</span>';
+    showMsg('connect-msg', 'Connection failed: ' + (e.message || String(e)), 'err');
+    btn.disabled = false;
+    btn.textContent = 'Connect OP_WALLET';
+  }
+}
+
+async function loadCurrentNote() {
+  try {
+    var res = await fetch('/api/note');
+    var note = await res.json();
+    var el = document.getElementById('current-note');
+    var meta = document.getElementById('current-note-meta');
+    if (note.text) {
+      el.textContent = note.text;
+      if (meta) meta.textContent = note.updatedAt
+        ? 'Last updated: ' + new Date(note.updatedAt).toLocaleString()
+        : '';
+    } else {
+      el.innerHTML = '<em style="color:var(--muted)">No note set.</em>';
+      if (meta) meta.textContent = '';
+    }
+  } catch (e) {}
+}
+
+function updateCharCount() {
+  var ta = document.getElementById('note-input');
+  var cc = document.getElementById('char-count');
+  if (ta && cc) cc.textContent = ta.value.length;
+}
+
+async function submitNote() {
+  var text = (document.getElementById('note-input').value || '').trim();
+  await doSubmit(text);
+}
+
+async function clearNote() {
+  if (!confirm('Clear the current status note?')) return;
+  await doSubmit('');
+}
+
+async function doSubmit(text) {
+  if (!walletAddress) { showMsg('submit-msg', 'Wallet not connected.', 'err'); return; }
+
+  var btnSubmit = document.getElementById('btn-submit');
+  var btnClear  = document.getElementById('btn-clear');
+  btnSubmit.disabled = true;
+  btnClear.disabled  = true;
+  btnSubmit.textContent = 'Submitting...';
+  hideMsg('submit-msg');
+
+  try {
+    // 1. Get a fresh challenge token from the server
+    var chRes = await fetch('/api/admin/challenge');
+    if (!chRes.ok) throw new Error('Could not get auth challenge from server.');
+    var chData = await chRes.json();
+    var challenge = chData.challenge;
+
+    // 2. POST the note with the wallet address + challenge
+    //    The server verifies address === DEPLOYER_ADDRESS and challenge is valid
+    var res = await fetch('/api/admin/note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge: challenge, address: walletAddress, note: text }),
+    });
+
+    var data = await res.json();
+
+    if (res.ok) {
+      showMsg('submit-msg', text ? '\u2713 Status note updated.' : '\u2713 Note cleared.', 'ok');
+      loadCurrentNote();
+      if (!text) document.getElementById('note-input').value = '';
+      updateCharCount();
+    } else if (res.status === 403) {
+      showMsg('submit-msg',
+        'Access denied. Connected address is not the deployer.\n' +
+        'Expected deployer address \u2014 make sure you are using the correct wallet.', 'err');
+    } else if (res.status === 401) {
+      showMsg('submit-msg', 'Auth challenge expired. Please try again.', 'err');
+    } else {
+      showMsg('submit-msg', data.error || 'Unknown server error.', 'err');
+    }
+  } catch (e) {
+    showMsg('submit-msg', 'Request failed: ' + (e.message || String(e)), 'err');
+  } finally {
+    btnSubmit.disabled = false;
+    btnClear.disabled  = false;
+    btnSubmit.textContent = '\u2713 Update Status Note';
+  }
+}
+</script>
+</body>
+</html>

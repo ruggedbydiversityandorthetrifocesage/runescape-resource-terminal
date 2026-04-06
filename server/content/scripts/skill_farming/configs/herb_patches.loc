@@ -1,0 +1,105 @@
+// Herb Patch LOC definitions using real Rev412 model IDs
+// LOC names match loc.pack (3550=herb_patch_falador, 3551=herb_patch_catherby, 3552=herb_patch_ardougne)
+// Models extracted from Rev412 cache/7/ and added to ondemand.zip:
+//   7794=farming_patch_empty_herb (empty patch)
+//   7766=farming_patch_surround_a (patch border)
+// LOC model syntax: model= (first), model2= (second), model3= (third)
+
+[herb_patch_falador]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+op1=Rake
+op2=Inspect
+op3=Harvest
+op5=Guide
+
+[herb_patch_catherby]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+op1=Rake
+op2=Inspect
+op3=Harvest
+op5=Guide
+
+[herb_patch_ardougne]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_empty_herb
+model2=farming_patch_surround_a
+op1=Rake
+op2=Inspect
+op3=Harvest
+op5=Guide
+
+// State-specific LOCs for future visual updates (Rev412 LOC IDs 8115-8121)
+[herb_patch_empty]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_empty_herb
+op2=Inspect
+op4=Guide
+
+[herb_patch_growing]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_growing_c
+model2=farming_patch_surround_a
+op2=Inspect
+op4=Guide
+
+[herb_patch_seeded]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_seeded
+model2=farming_patch_surround_a
+op2=Inspect
+op4=Guide
+
+[herb_patch_ready]
+name=Herb Patch
+desc=You can grow herbs in this Farming patch.
+model=farming_patch_ready
+model2=farming_patch_surround_a
+op1=Harvest
+op2=Inspect
+op4=Guide
+
+// Allotment patches (Rev412 LOC IDs 8532-8538)
+[allotment_empty]
+name=Allotment
+desc=You can grow fruit and vegetables here.
+model=allotment_patch_empty
+model2=farming_patch_surround_a
+op2=Inspect
+op4=Guide
+
+[allotment_ready]
+name=Allotment
+desc=You can grow fruit and vegetables here.
+model=allotment_patch_ready
+model2=farming_patch_surround_a
+op1=Harvest
+op2=Inspect
+op4=Guide
+
+// Hops patches (Rev412 LOC IDs 8182-8185)
+[hops_patch_empty]
+name=Hops Patch
+desc=You can grow hops in this Farming patch.
+model=allotment_patch_empty
+model2=farming_patch_surround_a
+op2=Inspect
+op4=Guide
+
+[hops_patch_ready]
+name=Hops Patch
+desc=You can grow hops in this Farming patch.
+model=allotment_patch_ready
+model2=farming_patch_surround_a
+op1=Harvest
+op2=Inspect
+op4=Guide

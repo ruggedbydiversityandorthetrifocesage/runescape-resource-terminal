@@ -18,7 +18,7 @@ const networks = {
     },
 };
 
-export const RST_CONTRACT_ADDR = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
+export const RST_CONTRACT_ADDR = 'opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw'; // v9 live testnet
 export const RST_GP_PER_TOKEN = 1000; // 1,000 GP = 1 RST (18 decimals)
 
 const RST_MINT_ABI = [
@@ -236,10 +236,10 @@ export function isMintConfigured(): boolean {
     return !!process.env.RST_MINTER_WIF;
 }
 
-// RSTStaking V2 — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender identity)
-export const SRST_STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
+// RSTStaking V3 — redeployed 2026-03-17 (btc-runtime 1.11.0)
+export const SRST_STAKING_CONTRACT = 'opt1sqznx9cv0lhl6f7e5pxufhzegy6fmuf3w9cqpky5t';
 // 32-byte tweaked pubkey of sRST staking contract — used as `to` in RST.transfer()
-const SRST_STAKING_PUBKEY = '8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
+const SRST_STAKING_PUBKEY = '611a529e3da62357e4959ad3b3f98d1f05bb8676425476af5d25926b4f9737cb';
 
 const RST_TRANSFER_ABI = [
     {

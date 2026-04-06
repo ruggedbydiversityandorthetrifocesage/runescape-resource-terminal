@@ -1,0 +1,8 @@
+[slayer_tasks]
+column=task_id,int,INDEXED,REQUIRED
+column=npc,npc,LIST
+column=xp_per_kill,int
+column=min_count,int
+column=max_count,int
+column=min_level,int
+column=name,string

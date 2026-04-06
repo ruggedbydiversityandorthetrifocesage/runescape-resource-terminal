@@ -1,0 +1,12 @@
+{
+  "name": "rst-status-page",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

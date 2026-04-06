@@ -20,3 +20,6 @@ if ($rng < 32) {
 } else if ($rng < 64) {
     obj_add(npc_coord, feather, 5, ^lootdrop_duration);
 }
+
+// Slayer task tracking
+~slayer_check_kill(2, 5);

@@ -1,0 +1,21 @@
+// Home portal — spawned dynamically in Lumbridge by HouseManager at server start
+[home_portal]
+name=House Portal
+desc=A portal into a player-owned house.
+model=model_loc_739
+length=2
+ambient=100
+active=yes
+op1=Build mode
+op2=Visit
+
+// Exit portal placed inside each player's house
+[house_exit_portal]
+name=Portal
+desc=A portal back to Lumbridge.
+model=model_loc_739
+length=2
+ambient=100
+active=yes
+op1=Exit
+op2=House Options

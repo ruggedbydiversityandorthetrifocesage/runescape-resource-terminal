@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RST Server Status</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111;
+    --border: #222;
+    --text: #ccc;
+    --muted: #555;
+    --green: #00c853;
+    --red: #ff3d3d;
+    --yellow: #ffd600;
+    --blue: #40c4ff;
+    --orange: #ff9100;
+    --accent: #b08d57;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px;
+  }
+  .container { width: 100%; max-width: 640px; }
+  .logo {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .logo h1 {
+    font-size: 22px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 4px;
+  }
+  .logo p {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .status-row:last-child { border-bottom: none; }
+  .status-label { color: var(--text); }
+  .status-value { font-weight: bold; }
+  .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+  }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot.yellow { background: var(--yellow); box-shadow: 0 0 4px var(--yellow); }
+  .dot.gray { background: var(--muted); }
+  .val-green { color: var(--green); }
+  .val-red { color: var(--red); }
+  .val-yellow { color: var(--yellow); }
+  .val-blue { color: var(--blue); }
+  .val-muted { color: var(--muted); }
+  .note-box {
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 14px 16px;
+    margin-top: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .note-meta {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 8px;
+    letter-spacing: 1px;
+  }
+  .note-empty { color: var(--muted); font-style: italic; }
+  .refresh-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 4px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    border-radius: 2px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .progress {
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    margin-top: 16px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 1s linear;
+  }
+  .admin-link {
+    display: block;
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    letter-spacing: 1px;
+    transition: color 0.2s;
+  }
+  .admin-link:hover { color: var(--accent); }
+  .pulse {
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <h1>&#9876; RST Server Status</h1>
+    <p>Runescape Resource Terminal &mdash; OPNet Testnet</p>
+  </div>
+
+  <!-- Game Server Status -->
+  <div class="card">
+    <div class="card-title">Game Server</div>
+    <div class="status-row">
+      <span class="status-label">Status</span>
+      <span class="status-value" id="game-status"><span class="dot gray pulse"></span><span class="val-muted">Checking...</span></span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Response Time</span>
+      <span class="status-value val-muted" id="game-rt">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Endpoint</span>
+      <span class="status-value val-muted" id="game-code">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Last Checked</span>
+      <span class="status-value val-muted" id="game-checked">—</span>
+    </div>
+  </div>
+
+  <!-- OPNet Status -->
+  <div class="card">
+    <div class="card-title">OPNet Testnet</div>
+    <div class="status-row">
+      <span class="status-label">Latest Block</span>
+      <span class="status-value val-blue" id="opnet-block">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Block Time</span>
+      <span class="status-value val-muted" id="opnet-time">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Last Checked</span>
+      <span class="status-value val-muted" id="opnet-checked">—</span>
+    </div>
+  </div>
+
+  <!-- Admin Note -->
+  <div class="card" id="note-card">
+    <div class="card-title">Status Note</div>
+    <div class="note-box" id="note-text"></div>
+    <div class="note-meta" id="note-meta"></div>
+  </div>
+
+  <!-- Footer -->
+  <div class="refresh-row">
+    <span id="next-refresh">Refreshes in 30s</span>
+    <button class="refresh-btn" onclick="refresh()">&#8635; Refresh Now</button>
+  </div>
+  <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+
+  <a href="/admin" class="admin-link">[ admin ]</a>
+</div>
+
+<script>
+const REFRESH_INTERVAL = 30;
+let countdown = REFRESH_INTERVAL;
+let progressTimer = null;
+
+function fmt(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  const now = new Date();
+  const diff = Math.round((now - d) / 1000);
+  if (diff < 5) return 'Just now';
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return d.toLocaleTimeString();
+}
+
+function relTime(isoStr) {
+  if (!isoStr) return '—';
+  return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function setEl(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    renderStatus(data);
+  } catch (e) {
+    setEl('game-status', '<span class="dot red"></span><span class="val-red">STATUS PAGE ERROR</span>');
+  }
+  resetCountdown();
+}
+
+function renderStatus(data) {
+  // Game server
+  const g = data.game;
+  if (g.online) {
+    setEl('game-status', '<span class="dot green"></span><span class="val-green">ONLINE</span>');
+    setEl('game-rt', g.responseTimeMs != null ? '<span class="val-green">' + g.responseTimeMs + ' ms</span>' : '—');
+  } else {
+    setEl('game-status', '<span class="dot red"></span><span class="val-red">OFFLINE</span>');
+    setEl('game-rt', '<span class="val-muted">—</span>');
+  }
+  setEl('game-code', g.statusCode != null ? g.statusCode : '—');
+  setEl('game-checked', fmt(g.checkedAt));
+
+  // OPNet
+  const o = data.opnet;
+  if (o.blockHeight != null) {
+    setEl('opnet-block', '<span class="val-blue">#' + o.blockHeight.toLocaleString() + '</span>');
+    setEl('opnet-time', relTime(o.blockTime));
+  } else {
+    setEl('opnet-block', '<span class="val-muted">Unavailable</span>');
+    setEl('opnet-time', '—');
+  }
+  setEl('opnet-checked', fmt(o.checkedAt));
+
+  // Admin note
+  const n = data.note;
+  const noteEl = document.getElementById('note-text');
+  const noteMeta = document.getElementById('note-meta');
+  if (n.text) {
+    noteEl.textContent = n.text;
+    noteEl.classList.remove('note-empty');
+    if (noteMeta) {
+      noteMeta.textContent = 'Updated ' + fmt(n.updatedAt) + (n.updatedBy ? ' · ' + n.updatedBy.slice(0, 20) + '...' : '');
+    }
+  } else {
+    noteEl.innerHTML = '<em class="note-empty">No status note set.</em>';
+    if (noteMeta) noteMeta.textContent = '';
+  }
+}
+
+function resetCountdown() {
+  countdown = REFRESH_INTERVAL;
+  if (progressTimer) clearInterval(progressTimer);
+  const bar = document.getElementById('progress-bar');
+  const label = document.getElementById('next-refresh');
+  if (bar) bar.style.width = '0%';
+  progressTimer = setInterval(() => {
+    countdown--;
+    if (bar) bar.style.width = ((REFRESH_INTERVAL - countdown) / REFRESH_INTERVAL * 100) + '%';
+    if (label) label.textContent = 'Refreshes in ' + countdown + 's';
+    if (countdown <= 0) {
+      clearInterval(progressTimer);
+      refresh();
+    }
+  }, 1000);
+}
+
+// Initial load
+refresh();
+resetCountdown();
+</script>
+</body>
+</html>

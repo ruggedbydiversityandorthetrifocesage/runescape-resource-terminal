@@ -266,3 +266,36 @@ data=levelup_jingle_millis,^advance_fletching_millis
 data=unlocks_jingle,^advance_fletching_2_jingle
 data=unlocks_jingle_millis,^advance_fletching_2_millis
 data=unlocks_levels,levelup_unlocks_fletching
+
+[levelup_slayer]
+table=levelup
+data=stat,slayer
+data=interface,levelup_woodcutting
+data=title,levelup_woodcutting:line1
+data=body,levelup_woodcutting:line2
+data=message,"Congratulations, you just advanced a Slayer level."
+data=level_prefix,Your Slayer level is now
+data=levelup_jingle,^advance_woodcutting_jingle
+data=levelup_jingle_millis,^advance_woodcutting_millis
+
+[levelup_farming]
+table=levelup
+data=stat,farming
+data=interface,levelup_fishing
+data=title,levelup_fishing:line1
+data=body,levelup_fishing:line2
+data=message,"Congratulations, you just advanced a Farming level."
+data=level_prefix,Your Farming level is now
+data=levelup_jingle,^advance_fishing_jingle
+data=levelup_jingle_millis,^advance_fishing_millis
+
+[levelup_construction]
+table=levelup
+data=stat,construction
+data=interface,levelup_crafting
+data=title,levelup_crafting:line1
+data=body,levelup_crafting:line2
+data=message,"Congratulations, you just advanced a Construction level."
+data=level_prefix,Your Construction level is now
+data=levelup_jingle,^advance_crafting_jingle
+data=levelup_jingle_millis,^advance_crafting_millis

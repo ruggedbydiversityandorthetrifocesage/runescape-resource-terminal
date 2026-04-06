@@ -1,0 +1,25 @@
+// Farming herb seeds - not present in rev 225 cache, added for farming skill
+[ranarr_seed]
+name=Ranarr seed
+desc=A seed for growing ranarr herbs.
+cost=50
+
+[irit_seed]
+name=Irit seed
+desc=A seed for growing irit herbs.
+cost=40
+
+[kwuarm_seed]
+name=Kwuarm seed
+desc=A seed for growing kwuarm herbs.
+cost=60
+
+[harralander_seed]
+name=Harralander seed
+desc=A seed for growing harralander herbs.
+cost=20
+
+[tarromin_seed]
+name=Tarromin seed
+desc=A seed for growing tarromin herbs.
+cost=15

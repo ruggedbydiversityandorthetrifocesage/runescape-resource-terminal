@@ -1,0 +1,73 @@
+// Slayer - Turael assigns combat tasks
+// Task IDs:
+//   1=Cows, 2=Chickens, 3=Goblins, 4=Men, 5=Spiders
+//   6=Scorpions, 7=Zombies, 8=Skeletons
+//   9=Hill Giants, 10=Moss Giants, 11=Lesser Demons
+
+[opnpc1,turael]
+if (%slayer_task_count > 0) {
+    db_find(slayer_tasks:task_id, %slayer_task_id);
+    def_dbrow $current = db_findnext;
+    if ($current = null) {
+        mes("You already have a Slayer task assigned.");
+    } else {
+        def_string $current_name = db_getfield($current, slayer_tasks:name, 0);
+        ~chatnpc("<p,neutral>You already have a Slayer task.|Kill <tostring(%slayer_task_count)> more <$current_name>.");
+    }
+    return;
+}
+~chatnpc("<p,neutral>Ah, an adventurer seeking worthy battle.|I am Turael, master of slayer.");
+~chatplayer("<p,quiz>What task do you have for me?");
+def_int $level = stat(slayer);
+// Unlock harder tasks as slayer level increases
+def_int $max_task = 5;
+if ($level >= 50) {
+    $max_task = 11;
+} else if ($level >= 25) {
+    $max_task = 10;
+} else if ($level >= 15) {
+    $max_task = 9;
+} else if ($level >= 10) {
+    $max_task = 8;
+} else if ($level >= 7) {
+    $max_task = 6;
+}
+def_int $task = calc(random($max_task) + 1);
+// Look up the selected task row
+db_find(slayer_tasks:task_id, $task);
+def_dbrow $data = db_findnext;
+if ($data = null) {
+    // Fallback: if lookup fails, assign task 1 (cows)
+    $task = 1;
+    db_find(slayer_tasks:task_id, 1);
+    $data = db_findnext;
+}
+if ($data = null) {
+    mes("I'm afraid I have no task for you right now.");
+    return;
+}
+def_int $min = db_getfield($data, slayer_tasks:min_count, 0);
+def_int $max = db_getfield($data, slayer_tasks:max_count, 0);
+def_int $count = calc($min + random(calc($max - $min + 1)));
+def_string $name = db_getfield($data, slayer_tasks:name, 0);
+%slayer_task_id = $task;
+%slayer_task_count = $count;
+~chatnpc("<p,neutral>Your task is to kill <tostring($count)> <$name>.|Return to me when you have completed it.");
+
+
+// Called from NPC death handlers after npc_findhero establishes uid = player uid.
+// Uses p_finduid(uid) = true pattern to satisfy compiler's p_active_player tracking.
+// task_id: the slayer_tasks.task_id value for this NPC type
+// xp_per_kill: xp to award
+[proc,slayer_check_kill](int $task_id, int $xp_per_kill)
+if (p_finduid(uid) = true) {
+    if (%slayer_task_count > 0 & %slayer_task_id = $task_id) {
+        stat_advance(slayer, $xp_per_kill);
+        %slayer_task_count = calc(%slayer_task_count - 1);
+        if (%slayer_task_count < 1) {
+            %slayer_task_count = 0;
+            %slayer_task_id = 0;
+            mes("You have completed your Slayer task! Return to Turael for a new task.");
+        }
+    }
+}

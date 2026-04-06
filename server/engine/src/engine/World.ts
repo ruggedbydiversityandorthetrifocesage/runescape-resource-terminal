@@ -61,8 +61,9 @@ import ScriptState from '#/engine/script/ScriptState.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 import { WorldStat } from '#/engine/WorldStat.js';
 import { getTutorialStep, RESOURCE_ITEM_IDS, setTutorialStep, tutorialRemindTick, TUTORIAL_STORE_X, TUTORIAL_STORE_Z, TUTORIAL_TREE_X, TUTORIAL_TREE_Z, TUTORIAL_BANK_X, TUTORIAL_BANK_Z } from '#/engine/pill/TutorialTracker.js';
-import { awardCowKillGP, COW_NPC_IDS } from '#/engine/pill/PillMerchant.js';
+import { awardCowKillGP, COW_NPC_IDS, isDragonSlayerEnabled, awardGiantKillGP, HILL_GIANT_NPC_IDS, MOSS_GIANT_NPC_IDS, HILL_GIANT_KILL_GP, MOSS_GIANT_KILL_GP } from '#/engine/pill/PillMerchant.js';
 import { broadcastRSTShop, setRSTBrokerNpc, setFishingSuppliesNid } from '#/engine/pill/RSTShop.js';
+import { loadHouseRegistry, getOrCreateHouseIndex, getAllHouseIndices, houseBaseX, houseBaseZ, HOUSE_PORTAL_X, HOUSE_PORTAL_Z } from '#/engine/pill/HouseManager.js';
 import Zone from '#/engine/zone/Zone.js';
 import Isaac from '#/io/Isaac.js';
 import Packet from '#/io/Packet.js';
@@ -383,6 +384,69 @@ class World {
                     printInfo('[RST] Fishing Supplies NPC spawned at (3231, 3207)');
                 } catch (err) {
                     printError('[RST] Failed to spawn Fishing Supplies NPC: ' + err);
+                }
+
+                // Load house registry and spawn home portal in Lumbridge
+                try {
+                    loadHouseRegistry();
+                    for (const idx of getAllHouseIndices()) {
+                        // Pre-touch all 8x8 zones in the 32x32 house footprint
+                        for (let dx = 0; dx < 32; dx += 8) {
+                            for (let dz = 0; dz < 32; dz += 8) {
+                                this.gameMap.getZone(houseBaseX(idx) + dx, houseBaseZ(idx) + dz, 0);
+                            }
+                        }
+                    }
+                    const homePortalId = LocType.getId('home_portal');
+                    if (homePortalId >= 0) {
+                        const portalType = LocType.get(homePortalId);
+                        const homePortal = new Loc(0, HOUSE_PORTAL_X, HOUSE_PORTAL_Z, portalType.width, portalType.length, EntityLifeCycle.DESPAWN, homePortalId, 10, 0);
+                        this.addLoc(homePortal, -1);
+                        printInfo(`[Housing] Home portal spawned at (${HOUSE_PORTAL_X}, ${HOUSE_PORTAL_Z})`);
+                    } else {
+                        printError('[Housing] home_portal LOC type not found — portal not spawned');
+                    }
+                } catch (err) {
+                    printError('[Housing] Failed to spawn home portal: ' + err);
+                }
+
+                // Spawn Turael (Slayer Master) in Burthorpe — NPC ID 1055
+                // Rev412 NPC ID 70, models: 208,251,3379,317,174,179,274,185,555 (all in ondemand.zip)
+                try {
+                    const turaelId = NpcType.getId('turael');
+                    if (turaelId >= 0) {
+                        const turaelType = NpcType.get(turaelId);
+                        const turael = new Npc(0, 2929, 3536, turaelType.size, turaelType.size, EntityLifeCycle.DESPAWN, this.getNextNid(), turaelId, MoveRestrict.NOMOVE, turaelType.blockwalk);
+                        turael.targetOp = NpcMode.NONE;
+                        this.addNpc(turael, -1);
+                        printInfo('[Slayer] Turael spawned at (2929, 3536)');
+                    } else {
+                        printError('[Slayer] turael NPC type not found');
+                    }
+                } catch (err) {
+                    printError('[Slayer] Failed to spawn Turael: ' + err);
+                }
+
+                // Spawn herb patches at classic RS2 farming patch coordinates
+                // Rev412 LOC IDs confirmed: herb_patch_falador=3550, catherby=3551, ardougne=3552
+                // Models from Rev412: 7794=empty, 7766=surround (extracted and added to ondemand.zip)
+                try {
+                    const HERB_PATCHES = [
+                        { name: 'herb_patch_falador', x: 3058, z: 3311 },  // South Falador park
+                        { name: 'herb_patch_catherby', x: 2813, z: 3462 }, // East Catherby
+                        { name: 'herb_patch_ardougne', x: 2670, z: 3374 }, // Kandarin monastery
+                    ];
+                    for (const patch of HERB_PATCHES) {
+                        const locId = LocType.getId(patch.name);
+                        if (locId >= 0) {
+                            const locType = LocType.get(locId);
+                            const herbPatch = new Loc(0, patch.x, patch.z, locType.width, locType.length, EntityLifeCycle.DESPAWN, locId, 10, 0);
+                            this.addLoc(herbPatch, -1);
+                        }
+                    }
+                    printInfo('[Farming] Herb patches spawned at Falador, Catherby, Ardougne');
+                } catch (err) {
+                    printError('[Farming] Failed to spawn herb patches: ' + err);
                 }
             }
         }
@@ -1127,6 +1191,14 @@ class World {
             player.tele = true;
             player.moveClickRequest = false;
 
+            // Safety: if player saved while inside a house instance (region 70+, z 12800+),
+            // eject to main world spawn. Houses are temporary — never persist inside one.
+            if (player.x >= 4480 && player.z >= 12800) {
+                player.x = HOUSE_PORTAL_X;
+                player.z = HOUSE_PORTAL_Z;
+                player.level = 0;
+            }
+
             this.gameMap.getZone(player.x, player.z, player.level).enter(player);
             player.onLogin();
 
@@ -1138,11 +1210,13 @@ class World {
                 }
             }
 
-            // Auto-complete Rune Mysteries quest for all players
-            {
-                const runeMystVarp = VarPlayerType.getByName('runemysteries');
-                if (runeMystVarp && player.vars[runeMystVarp.id] < 6) {
-                    player.setVar(runeMystVarp.id, 6);
+            // Dragon Slayer unlock — set dragon_shield = 1 when community milestone is hit.
+            // This makes Duke Horacio show the anti-dragon shield dialog to everyone.
+            // The full quest chain (Guildmaster → Oziach → maps → Elvarg) stays intact.
+            if (isDragonSlayerEnabled()) {
+                const dragonShieldVarp = VarPlayerType.getByName('dragon_shield');
+                if (dragonShieldVarp && player.vars[dragonShieldVarp.id] < 1) {
+                    player.setVar(dragonShieldVarp.id, 1); // = ^quest_dragon_knows_about_shield
                 }
             }
 
@@ -1162,6 +1236,19 @@ class World {
             } else if (tStep === 2) {
                 player.hintTile(2, TUTORIAL_BANK_X, TUTORIAL_BANK_Z, 0);
                 player.messageGame('Great work! Now visit Satoshi the Banker to store your items.');
+            }
+
+            // Assign house index varp so construction.rs2 knows which house slot this player owns
+            const houseIndexVarp = VarPlayerType.getByName('house_index');
+            if (houseIndexVarp) {
+                const idx = getOrCreateHouseIndex(player.username);
+                // Pre-touch all zones in house footprint so loc_add works on entry
+                for (let dx = 0; dx < 32; dx += 8) {
+                    for (let dz = 0; dz < 32; dz += 8) {
+                        this.gameMap.getZone(houseBaseX(idx) + dx, houseBaseZ(idx) + dz, 0);
+                    }
+                }
+                player.setVar(houseIndexVarp.id, idx);
             }
 
             if (this.shutdownTick != -1) {
@@ -1540,14 +1627,22 @@ class World {
         zone.leave(npc);
         npc.isActive = false;
 
-        // Cow kill RST reward: award 0.1 RST (100 GP) to the killing player
-        if (duration > -1 && COW_NPC_IDS.has(npc.type)) {
+        // Combat NPC kill GP rewards (direct, unaffected by Tier 2 price multiplier)
+        if (duration > -1) {
             const killerHash = npc.heroPoints.findHero();
             if (killerHash !== -1n) {
                 const killer = this.getPlayerByHash64(killerHash);
                 if (killer) {
-                    awardCowKillGP(killer.username);
-                    killer.messageGame('Cow killed! +100 GP RST reward added to your balance.');
+                    if (COW_NPC_IDS.has(npc.type)) {
+                        awardCowKillGP(killer.username);
+                        killer.messageGame('Cow killed! +10 GP toward RST.');
+                    } else if (HILL_GIANT_NPC_IDS.has(npc.type)) {
+                        awardGiantKillGP(killer.username, HILL_GIANT_KILL_GP, 'hill');
+                        killer.messageGame('Hill Giant slain! +' + HILL_GIANT_KILL_GP + ' GP toward RST.');
+                    } else if (MOSS_GIANT_NPC_IDS.has(npc.type)) {
+                        awardGiantKillGP(killer.username, MOSS_GIANT_KILL_GP, 'moss');
+                        killer.messageGame('Moss Giant slain! +' + MOSS_GIANT_KILL_GP + ' GP toward RST.');
+                    }
                 }
             }
         }

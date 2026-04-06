@@ -1,0 +1,5 @@
+[slayer_task_id]
+scope=perm
+
+[slayer_task_count]
+scope=perm

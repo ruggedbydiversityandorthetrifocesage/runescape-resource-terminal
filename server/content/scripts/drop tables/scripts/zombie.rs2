@@ -46,7 +46,7 @@ if ($dropint < 4) {
 } else if ($dropint < 120) {
     obj_add(npc_coord, copper_ore, 1, ^lootdrop_duration);
 }
-
+~slayer_check_kill(7, 15);
 // Armed Zombie
 [ai_queue3,zombie_armed] @armed_zombie;
 
@@ -98,7 +98,7 @@ if ($dropint < 3) {
 } else if ($dropint < 125) {
     obj_add(npc_coord, ~randomjewel, ^lootdrop_duration);
 }
-
+~slayer_check_kill(7, 15);
 [ai_queue3,zombie_entranan]
 gosub(npc_death);
 if (npc_findhero = ^false) {
@@ -130,3 +130,5 @@ if ($dropint < 50) {
     obj_add(npc_coord, coins, 28, ^lootdrop_duration);
 }
 // Nothing - 8/128
+// Slayer task tracking
+~slayer_check_kill(7, 15);

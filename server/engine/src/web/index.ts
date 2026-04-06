@@ -17,7 +17,7 @@ async function fetchRstPrice() {
     if (_rstPriceCache && Date.now() - _rstPriceCache.ts < 5 * 60 * 1000) return _rstPriceCache;
     try {
         const NATIVE_SWAP = '0x4397befe4e067390596b3c296e77fe86589487bf3bf3f0a9a93ce794e2d78fb5';
-        const RST_PUBKEY = '8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+        const RST_PUBKEY = 'f4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
         const calldata = 'efec69cc' + RST_PUBKEY;
         const [rpcRes, geckoRes] = await Promise.all([
             fetch('https://testnet.opnet.org/api/v1/json-rpc', {
@@ -121,11 +121,11 @@ button:disabled { background: #333; color: #666; cursor: not-allowed; }
   <div class="contract">RST: 0xb09fc29c112af8293539477e23d8df1d3126639642767d707277131352040cbb</div>
 </div>
 <script>
-const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
-const RST_CONTRACT_PUBKEY = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+const RST_CONTRACT = 'opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw';
+const RST_CONTRACT_PUBKEY = '0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
 // RSTStaking V2 MasterChef — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender)
-const STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
-const STAKING_CONTRACT_PUBKEY = '0x8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
+const STAKING_CONTRACT = 'opt1sqznx9cv0lhl6f7e5pxufhzegy6fmuf3w9cqpky5t';
+const STAKING_CONTRACT_PUBKEY = '0x611a529e3da62357e4959ad3b3f98d1f05bb8676425476af5d25926b4f9737cb';
 let connectedWallet = null;
 
 function bech32mAddrToHex(addr) {
@@ -214,7 +214,7 @@ async function connectAndClaim() {
     });
     const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
     // RST contract secret = tweakedPubkey (32 bytes), not the P2OP witness program (21 bytes)
-    const contractHexClaim = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+    const contractHexClaim = '0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
     const params = { to: RST_CONTRACT, contract: contractHexClaim, calldata, from: connectedWallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: true, revealMLDSAPublicKey: false };
     showStatus('Check OP_WALLET to sign...', 'info');
     if (typeof web3.signAndBroadcastInteraction === 'function') {
@@ -364,7 +364,7 @@ th { padding:8px 12px; text-align:left; color:#666; font-size:12px; font-weight:
                     return x.toLocaleString();
                 }
 
-                const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','—','—','Runecrafting'];
+                const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','Slayer','Farming','Runecrafting','Hunter','Construction'];
                 const SKILL_ICONS: Record<string, string> = {
                     Attack:'⚔️', Defence:'🛡️', Strength:'💪', Hitpoints:'❤️', Ranged:'🏹', Prayer:'🙏',
                     Magic:'🔮', Cooking:'🍳', Woodcutting:'🪓', Fletching:'🪶', Fishing:'🎣',
@@ -471,11 +471,26 @@ th { padding:7px 12px; text-align:left; color:#555; font-size:11px; font-weight:
                 }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
             }
 
+            if (url.pathname === '/rst/dragon-slayer-progress') {
+                const { getTotalCommunityGP, isDragonSlayerEnabled, DRAGON_SLAYER_THRESHOLD_GP } = await import('../engine/pill/PillMerchant.js');
+                const totalGP = getTotalCommunityGP();
+                const threshold = DRAGON_SLAYER_THRESHOLD_GP;
+                const pct = Math.min(100, (totalGP / threshold) * 100);
+                return new Response(JSON.stringify({
+                    enabled: isDragonSlayerEnabled(),
+                    totalGP,
+                    thresholdGP: threshold,
+                    totalRST: totalGP / 1000,
+                    thresholdRST: threshold / 1000,
+                    pct: parseFloat(pct.toFixed(2)),
+                }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+            }
+
             // RST: Activity analytics — top earners per 1h/6h/24h
             if (url.pathname === '/rst/activity') {
                 const { activityLog } = await import('../engine/pill/PillMerchant.js');
                 const now = Date.now();
-                const windows: [string, number][] = [['1h', 3600000], ['6h', 21600000], ['24h', 86400000]];
+                const windows: [string, number][] = [['1h', 3600000], ['6h', 21600000], ['24h', 86400000], ['7d', 7 * 86400000], ['30d', 30 * 86400000]];
                 const result: Record<string, unknown> = {};
                 for (const [label, ms] of windows) {
                     const cutoff = now - ms;
@@ -524,7 +539,7 @@ th { padding:7px 12px; text-align:left; color:#555; font-size:11px; font-weight:
                     if (magic === 0x2004 && data.length >= 40) {
                         const version = (data[2] << 8) | data[3];
                         let pos = 24 + (version >= 2 ? 4 : 2);
-                        const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','—','—','Runecrafting'];
+                        const SKILL_NAMES = ['Attack','Defence','Strength','Hitpoints','Ranged','Prayer','Magic','Cooking','Woodcutting','Fletching','Fishing','Firemaking','Crafting','Smithing','Mining','Herblore','Agility','Thieving','Slayer','Farming','Runecrafting','Hunter','Construction'];
                         for (let i = 0; i < 21; i++) {
                             if (pos + 5 > data.length - 4) break;
                             const storedLevel = data[pos + 4];
@@ -1112,7 +1127,7 @@ h1 { font-family:Georgia,serif; font-size:36px; background:linear-gradient(180de
         <li>&#x2705; LP pool live on MotoSwap NativeSwap &mdash; RST tradeable now</li>
         <li>&#x1F525; 1% swap fee on every trade goes to the LP</li>
       </ul>
-      <div class="contract-addr">V1 Contract: <span>opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl</span></div>
+      <div class="contract-addr">V1 Contract: <span>opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw</span></div>
     </div>
   </div>
 
@@ -1671,6 +1686,25 @@ footer a { color: #666; }
       </div>
     </div>
 
+    <!-- Dragon Slayer Community Milestone Progress Bar -->
+    <div id="dragonMilestone" style="margin:18px auto;max-width:480px;background:#1a0a00;border:1px solid #8b0000;border-radius:8px;padding:14px 20px;display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="color:#ff4400;font-weight:bold;font-size:1.05em;">&#x1F409; DRAGON SLAYER QUEST</span>
+        <span id="dsStatus" style="font-size:0.85em;color:#888;"></span>
+      </div>
+      <div id="dsUnlocked" style="display:none;color:#44cc44;font-weight:bold;text-align:center;padding:6px 0;font-size:1.1em;">&#x2705; UNLOCKED — Dragon Slayer is LIVE!</div>
+      <div id="dsProgress" style="">
+        <div style="font-size:0.82em;color:#aaa;margin-bottom:6px;">Community must earn <strong>10,000 RST</strong> from resources to unlock Dragon Slayer I</div>
+        <div style="background:#0a0000;border-radius:4px;height:18px;overflow:hidden;border:1px solid #440000;">
+          <div id="dsBar" style="height:100%;background:linear-gradient(90deg,#8b0000,#ff4400);border-radius:4px;width:0%;transition:width 0.8s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:0.78em;color:#888;">
+          <span id="dsGPLabel">0 RST earned</span>
+          <span id="dsPctLabel">0%</span>
+        </div>
+      </div>
+    </div>
+
     <div class="news-box">
       <h2>Latest News &amp; Updates</h2>
       <ul class="news-list">
@@ -1704,10 +1738,10 @@ footer a { color: #666; }
         <span class="price-ticker-sub" id="rstLiqBTC"></span>
       </div>
       <div class="price-ticker-item">
-        <a class="price-ticker-link" href="https://motoswap.org/token/0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1" target="_blank">Trade on MotoSwap &#x2197;</a>
+        <a class="price-ticker-link" href="https://motoswap.org/token/0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4" target="_blank">Trade on MotoSwap &#x2197;</a>
       </div>
       <div class="price-ticker-item">
-        <a class="price-ticker-link" href="https://opscan.org/tokens/0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1?network=op_testnet" target="_blank">OPScan &#x2197;</a>
+        <a class="price-ticker-link" href="https://opscan.org/tokens/0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4?network=op_testnet" target="_blank">OPScan &#x2197;</a>
       </div>
     </div>
   </div>
@@ -1869,6 +1903,8 @@ footer a { color: #666; }
           <button onclick="switchActivityTab('1h')" id="tab1h" style="background:#2a1a00;border:1px solid #f0c030;color:#f0c030;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">1H</button>
           <button onclick="switchActivityTab('6h')" id="tab6h" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">6H</button>
           <button onclick="switchActivityTab('24h')" id="tab24h" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">24H</button>
+          <button onclick="switchActivityTab('7d')" id="tab7d" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">7D</button>
+          <button onclick="switchActivityTab('30d')" id="tab30d" style="background:#1a1200;border:1px solid #3a2800;color:#888;padding:3px 10px;font-family:monospace;font-size:11px;cursor:pointer;border-radius:3px;">30D</button>
           <span style="margin-left:auto;color:#555;font-size:10px;align-self:center;" id="activityUpdated"></span>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px;">
@@ -1920,6 +1956,30 @@ fetch('/rst/server-stats')
     if (sl) sl.textContent = d.leaderboard ?? '—';
   })
   .catch(() => {});
+fetch('/rst/dragon-slayer-progress')
+  .then(r => r.json())
+  .then(d => {
+    const box = document.getElementById('dragonMilestone');
+    if (!box) return;
+    box.style.display = 'block';
+    const bar = document.getElementById('dsBar');
+    const gpLabel = document.getElementById('dsGPLabel');
+    const pctLabel = document.getElementById('dsPctLabel');
+    const status = document.getElementById('dsStatus');
+    const unlocked = document.getElementById('dsUnlocked');
+    const progress = document.getElementById('dsProgress');
+    if (d.enabled) {
+      if (unlocked) unlocked.style.display = 'block';
+      if (progress) progress.style.display = 'none';
+      if (status) status.textContent = 'TIER 2 ACTIVE';
+    } else {
+      if (bar) bar.style.width = d.pct + '%';
+      if (gpLabel) gpLabel.textContent = Math.floor(d.totalRST).toLocaleString() + ' / 10,000 RST earned';
+      if (pctLabel) pctLabel.textContent = d.pct.toFixed(1) + '%';
+      if (status) status.textContent = d.pct.toFixed(1) + '% complete';
+    }
+  })
+  .catch(() => {});
 fetch('/rst/price')
   .then(r => r.json())
   .then(d => {
@@ -1943,7 +2003,7 @@ var _activityData = null;
 var _activeTab = '1h';
 function switchActivityTab(tab) {
   _activeTab = tab;
-  ['1h','6h','24h'].forEach(function(t) {
+  ['1h','6h','24h','7d','30d'].forEach(function(t) {
     var btn = document.getElementById('tab' + t);
     if (!btn) return;
     if (t === tab) {
@@ -2295,7 +2355,7 @@ button.conn-btn:hover { background: #243300; }
       </ol>
     </div>
 
-    <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">V1 Contract: <span style="color:#888;">opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl</span></p>
+    <p style="color:#555;font-size:0.68em;margin-top:16px;text-align:center;">V1 Contract: <span style="color:#888;">opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw</span></p>
     <div style="text-align:center;margin-top:12px;">
       <a href="https://motoswap.org" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:8px 18px;background:#f7931a;color:#000;font-weight:bold;font-size:0.85em;border-radius:4px;text-decoration:none;letter-spacing:0.05em;">&#x26A1; BUY RST ON MOTOSWAP</a>
     </div>
@@ -2572,14 +2632,14 @@ button.conn-btn:hover { background: #243300; }
   </div>
 </div>
 <script>
-const RST_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
-const RST_CONTRACT_PUBKEY = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+const RST_CONTRACT = 'opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw';
+const RST_CONTRACT_PUBKEY = '0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
 // RSTStaking V2 MasterChef — redeployed 2026-03-09 (bob fixed to ad5bad18... = actual OPNet sender)
-const STAKING_CONTRACT = 'opt1sqzdum5vu8l0hw8rgcj4avtw92cakh7m26u56gn3n';
-const STAKING_CONTRACT_PUBKEY = '0x8f2772b12f5f7ea43e259a662d165f03a3aec179a4443ca46a1f9eb00908e7f1';
+const STAKING_CONTRACT = 'opt1sqznx9cv0lhl6f7e5pxufhzegy6fmuf3w9cqpky5t';
+const STAKING_CONTRACT_PUBKEY = '0x611a529e3da62357e4959ad3b3f98d1f05bb8676425476af5d25926b4f9737cb';
 // RST v8 — hardcoded server MLDSA hash as minter in onDeployment
-const RST_V2_CONTRACT = 'opt1sqq0uxr9f5e9qdswpaptpvgc8qr9thv2a4gwaj6fl';
-const RST_V2_CONTRACT_HEX = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+const RST_V2_CONTRACT = 'opt1sqzvnq5yetkcnwqzz02h23ch8294kgt0hxvvt9xyw';
+const RST_V2_CONTRACT_HEX = '0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
 // Deployer MLDSA hash — SHA256 of OP_WALLET deployer MLDSA pubkey; used for admin visibility check
 const DEPLOYER_ADDRESS = 'ad5bad18085ad4cf4f75b71d672bee0b19df826d622279b0020cc29120efce33';
 // Motoswap NativeSwap pool contract that emitted LiquidityListed for the RST/BTC pair
@@ -3822,7 +3882,7 @@ async function executeMint() {
     const network = { messagePrefix: '\\x18Bitcoin Signed Message:\\n', bech32: 'opt', bech32Opnet: 'opt', bip32: { public: 0x043587cf, private: 0x04358394 }, pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
     // RST contract secret = tweakedPubkey from getPublicKeyInfo (32 bytes)
     // bech32mAddrToHex gives only 21 bytes (P2OP witness program) — use the resolved tweakedPubkey instead
-    const contractHex = '0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1';
+    const contractHex = '0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4';
     const params = { to: RST_CONTRACT, contract: contractHex, calldata, from: wallet, utxos, feeRate: 10, priorityFee: BigInt(0), gasSatFee: BigInt(20000), network, linkMLDSAPublicKeyToAddress: false, revealMLDSAPublicKey: false };
     setModalStatus('Waiting for OP_WALLET signature...', 'info');
     let claimTxid = null;
@@ -4388,7 +4448,7 @@ function renderHTPContent(lang) {
     '<div class="htp-section">' +
       '<h3>' + t.import_title + '</h3>' +
       '<p>' + t.import_p + '</p>' +
-      '<span class="htp-addr">0x8ea522eb4c95f38e9f4f9a9c4b6f4f1d9e4f7b8d2b10902dbd302779105afaf1</span>' +
+      '<span class="htp-addr">0xf4d9ed7f424ca09d41655eb2a3c69d559fd2fdd857a75ffbafa9373ce4ac62d4</span>' +
     '</div>' +
     '<div class="htp-section">' +
       '<h3>' + t.steps_title + '</h3>' +

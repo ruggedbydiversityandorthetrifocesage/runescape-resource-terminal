@@ -1,0 +1,5 @@
+[farming_patches]
+column=patch_loc,loc,LIST,INDEXED,REQUIRED
+column=xp_harvest,int
+column=product,namedobj
+column=levelrequired,int

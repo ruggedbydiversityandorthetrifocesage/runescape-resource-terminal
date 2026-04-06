@@ -57,6 +57,8 @@ if ($dropint < 1) {
     obj_add(npc_coord, coins, 5, ^lootdrop_duration);
 }
 
+// Slayer task tracking
+~slayer_check_kill(3, 5);
 
 [ai_queue3,goblin_greenarmour] @goblin_village_drop_table; // Green
 [ai_queue3,goblin_redarmour] @goblin_village_drop_table; // Red
@@ -124,3 +126,5 @@ if ($dropint < 3) {
 } else if ($dropint < 109) {
     obj_add(npc_coord, tin_ore, 1, ^lootdrop_duration);
 }
+// Slayer task tracking
+~slayer_check_kill(3, 5);

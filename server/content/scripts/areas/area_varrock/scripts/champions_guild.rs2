@@ -1,9 +1,5 @@
 [oploc1,championdoor]
-if (%qp < 32) {
-    mes("The door won't open - you need at least 32 Quest Points.");
-    ~chatnpc_specific("Guild master", guildmaster, "<p,angry>You have not proved yourself worthy to enter here yet.");
-    return;
-}
+// RST server: no quest point requirement — anyone can enter and attempt Dragon Slayer
 // the sound in osrs is 1t early (if entering), so i cant use the proc
 def_coord $loc_coord = loc_coord;
 def_int $angle = loc_angle;

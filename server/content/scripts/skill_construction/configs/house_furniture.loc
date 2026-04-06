@@ -1,0 +1,298 @@
+// House furniture LOC types — placed via World.addLoc() during construction
+// All use existing RS2 cache models. op2=Remove lets owner tear them down.
+
+[house_chair]
+name=Crude chair
+desc=A rough wooden chair. Not very comfortable.
+model=model_loc_1088
+blockrange=no
+blockwalk=no
+active=yes
+op1=Sit
+op2=Remove
+
+[house_table]
+name=Wooden table
+desc=A simple wooden table.
+model=model_loc_625
+width=2
+blockrange=no
+blockwalk=no
+active=yes
+op2=Remove
+
+[house_bookcase]
+name=Bookcase
+desc=A wooden bookcase.
+model=model_loc_380
+length=2
+blockrange=no
+active=yes
+op1=Search
+op2=Remove
+
+[house_bed]
+name=Bed
+desc=A comfortable bed.
+model=model_loc_417
+length=2
+blockrange=no
+active=yes
+op1=Sleep
+op2=Remove
+
+[house_oak_chair]
+name=Oak chair
+desc=A sturdy oak chair.
+model=model_loc_1090
+blockrange=no
+blockwalk=no
+active=yes
+op1=Sit
+op2=Remove
+
+[house_yew_dresser]
+name=Yew dresser
+desc=A fine yew dresser with many drawers.
+model=model_loc_380
+length=2
+blockrange=no
+active=yes
+op1=Search
+op2=Remove
+
+// Construction furniture — 2006 Build 412 equivalent (RS2 loc IDs: 14791, 15150, etc.)
+[house_oak_table]
+name=Oak dining table
+desc=A basic oak dining table.
+model=model_loc_625
+width=2
+length=2
+blockrange=no
+active=yes
+op2=Remove
+
+[house_teak_table]
+name=Teak dining table
+desc=A nicely carved teak dining table.
+model=model_loc_625
+width=2
+length=2
+blockrange=no
+active=yes
+op2=Remove
+
+[house_fireplace]
+name=Clay fireplace
+desc=You can light a fire here.
+model=model_loc_2724
+anim=fireplace
+hasalpha=yes
+active=yes
+op1=Light
+op2=Remove
+
+[house_marble_fireplace]
+name=Marble fireplace
+desc=A grand marble fireplace.
+model=model_loc_2725
+anim=grandfireplace
+hasalpha=yes
+length=3
+active=yes
+op1=Light
+op2=Remove
+
+[house_portal]
+name=Portal frame
+desc=An un-directed teak portal frame.
+model=model_loc_1419
+width=2
+active=yes
+op1=Enter
+op2=Remove
+
+[house_oak_wardrobe]
+name=Oak wardrobe
+desc=A place to keep all your clothes.
+model=model_loc_380
+length=2
+active=yes
+op1=Open
+op2=Remove
+
+[house_oak_ladder]
+name=Oak ladder
+desc=An oak ladder.
+model=model_loc_2282
+length=1
+active=yes
+op1=Climb-up
+op2=Remove
+
+// Tier 2 bookcase — Mahogany Shelves (L80)
+[house_mahogany_shelves]
+name=Mahogany shelves
+desc=Fine mahogany shelves, packed with books.
+model=model_loc_380
+length=2
+blockrange=no
+active=yes
+op1=Search
+op2=Remove
+
+// Tier 2 bed — Four-poster Bed (L85)
+[house_fourposter_bed]
+name=Four-poster bed
+desc=A lavish four-poster bed. Very comfortable.
+model=model_loc_417
+length=2
+blockrange=no
+active=yes
+op1=Sleep
+op2=Remove
+
+// Prayer Altar — Tier 1: Limestone Altar (L45)
+[house_altar_limestone]
+name=Limestone altar
+desc=A simple limestone altar. You can pray here.
+model=model_loc_2733_0
+active=yes
+op1=Pray
+op2=Remove
+
+// Prayer Altar — Tier 2: Marble Altar (L75)
+[house_altar_marble]
+name=Marble altar
+desc=A grand marble altar, carved with runes.
+model=model_loc_2722_8
+active=yes
+op1=Pray
+op2=Remove
+
+// Prayer Altar — Tier 3: Gilded Altar (L90)
+[house_altar_gilded]
+name=Gilded altar
+desc=A golden altar of great spiritual power.
+model=model_loc_2723_8
+active=yes
+op1=Pray
+op2=Remove
+
+// Ghost furniture outlines — shown in build mode when room type is set but no furniture built.
+// Same models as the real furniture, hasalpha=yes for transparent ghost appearance.
+// op1=Build (place furniture), op2=Demolish Room
+
+[house_ghost_bedroom]
+name=Build spot
+desc=A bedroom awaiting furniture. Build a bed here.
+model=model_loc_417
+length=2
+hasalpha=yes
+blockrange=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_kitchen]
+name=Build spot
+desc=A kitchen awaiting equipment. Build a range here.
+model=model_loc_2724
+hasalpha=yes
+blockrange=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_dining]
+name=Build spot
+desc=A dining room awaiting furniture. Build a table here.
+model=model_loc_625
+width=2
+hasalpha=yes
+blockrange=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_workshop]
+name=Build spot
+desc=A workshop awaiting a workbench. Build one here.
+model=model_loc_625
+width=2
+hasalpha=yes
+blockrange=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_trophy]
+name=Build spot
+desc=A trophy room awaiting a display stand.
+model=model_loc_1088
+hasalpha=yes
+blockrange=no
+blockwalk=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_prayer]
+name=Build spot
+desc=A prayer room awaiting an altar. Build one here.
+model=model_loc_2733_0
+hasalpha=yes
+blockrange=no
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_ghost_portal]
+name=Build spot
+desc=A portal room awaiting a frame. Build one here.
+model=model_loc_1419
+width=2
+hasalpha=yes
+active=yes
+op1=Build
+op2=Demolish Room
+
+[house_range]
+name=Clay range
+desc=A clay cooking range.
+model=model_loc_2724
+anim=fireplace
+hasalpha=yes
+active=yes
+op1=Cook
+op2=Remove
+
+[house_steel_range]
+name=Steel range
+desc=A fine steel cooking range.
+model=model_loc_2725
+anim=grandfireplace
+hasalpha=yes
+active=yes
+op1=Cook
+op2=Remove
+
+[house_workbench]
+name=Workbench
+desc=A sturdy workbench for crafting.
+model=model_loc_625
+width=2
+blockrange=no
+active=yes
+op1=Use
+op2=Remove
+
+[house_trophy]
+name=Trophy stand
+desc=A trophy stand to display your accomplishments.
+model=model_loc_1088
+blockrange=no
+blockwalk=no
+active=yes
+op1=Admire
+op2=Remove

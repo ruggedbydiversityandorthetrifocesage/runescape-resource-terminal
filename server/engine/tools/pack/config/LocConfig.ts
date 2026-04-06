@@ -60,6 +60,11 @@ export function parseLocConfig(key: string, value: string): ConfigValue | null |
         'breakroutefinding'
     ];
 
+    // model2, model3, ... are deferred to the packing stage like model=
+    if (key.startsWith('model')) {
+        return value;
+    }
+
     if (stringKeys.includes(key)) {
         if (value.length > 1000) {
             // arbitrary limit

@@ -1,0 +1,24 @@
+// growth stage varp: 0=empty, 1=seedling, 2=growing, 3=ready
+[falador_herb_patch_stage]
+scope=perm
+type=int
+
+[falador_herb_patch_planted]
+scope=perm
+type=int
+
+[catherby_herb_patch_stage]
+scope=perm
+type=int
+
+[catherby_herb_patch_planted]
+scope=perm
+type=int
+
+[ardougne_herb_patch_stage]
+scope=perm
+type=int
+
+[ardougne_herb_patch_planted]
+scope=perm
+type=int

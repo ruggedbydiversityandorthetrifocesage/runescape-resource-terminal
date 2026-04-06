@@ -6,8 +6,8 @@ import { EcKeyPair, Wallet, Address } from '@btc-vision/transaction';
 import { QuantumBIP32Factory, MLDSASecurityLevel } from '@btc-vision/bip32';
 import { walletQueue, runWalletQueue } from './RSTMinter.js';
 
-// V2 BankLog — deployed 2026-03-14 with one-per-wallet guard + audit fields
-export const BANKLOG_CONTRACT_ADDR = 'opt1sqqm4lqy8f38uc47m9xp5lnmjjxnw4mgm3ggjqrxz';
+// V4 BankLog — deployed 2026-03-17, btc-runtime 1.11.0
+export const BANKLOG_CONTRACT_ADDR = 'opt1sqpy9gunnr7l0sxsnwwl4lgydw8g9dx6x2s97x7kf';
 
 const networks = {
     ..._networks,
@@ -33,8 +33,7 @@ const BANKLOG_MINT_ABI = [
     },
 ];
 
-// V2: updateScore now includes per-skill XP + resourcesSold for on-chain audit trail.
-// Anyone can verify: woodcuttingXp / 25 ≈ logs chopped, miningXp / 17.5 ≈ ores mined.
+// updateScore: 8 fields — tokenId, score, wcXp, miningXp, fishXp, rstEarned, resourcesSold, bankValue
 const BANKLOG_UPDATE_SCORE_ABI = [
     {
         name: 'updateScore',
@@ -49,6 +48,7 @@ const BANKLOG_UPDATE_SCORE_ABI = [
             { name: 'fishingXp',     type: 'UINT256' },
             { name: 'rstEarned',     type: 'UINT256' },
             { name: 'resourcesSold', type: 'UINT256' },
+            { name: 'bankValue',     type: 'UINT256' },
         ],
         outputs: [{ name: 'success', type: 'BOOL' }],
     },
@@ -200,6 +200,7 @@ interface StampData {
     fishingXp: number;
     rstEarned: number;
     resourcesSold: number;
+    bankValue: number; // GP value of player's bank (0 until tracked)
 }
 
 async function _stampBankLog(username: string, tokenId: number, d: StampData): Promise<boolean> {
@@ -222,6 +223,7 @@ async function _stampBankLog(username: string, tokenId: number, d: StampData): P
             BigInt(d.fishingXp),
             BigInt(Math.floor(d.rstEarned * 1e18)), // RST as wei (18 decimals)
             BigInt(d.resourcesSold),
+            BigInt(d.bankValue),                     // GP value of bank contents
         );
         if ('error' in sim) throw new Error('updateScore simulation failed: ' + (sim as any).error);
 
@@ -251,7 +253,7 @@ async function _stampBankLog(username: string, tokenId: number, d: StampData): P
  * Event-driven: only fires for active converters, not all players.
  * Runs through the shared walletQueue after the preceding grantClaim TX.
  */
-export function stampBankLog(username: string, totalLevel: number, wcXp: number, mineXp: number, fishXp: number, rstEarned: number, resourcesSold: number): void {
+export function stampBankLog(username: string, totalLevel: number, wcXp: number, mineXp: number, fishXp: number, rstEarned: number, resourcesSold: number, bankValue: number = 0): void {
     const key = username.toLowerCase();
     const reg = loadRegistry();
     const tokenId = reg.byUsername[key];
@@ -261,7 +263,7 @@ export function stampBankLog(username: string, totalLevel: number, wcXp: number,
     }
 
     const score = totalLevel * 10 + Math.floor(rstEarned * 5);
-    const stampData: StampData = { score, woodcuttingXp: wcXp, miningXp: mineXp, fishingXp: fishXp, rstEarned, resourcesSold };
+    const stampData: StampData = { score, woodcuttingXp: wcXp, miningXp: mineXp, fishingXp: fishXp, rstEarned, resourcesSold, bankValue };
     walletQueue.push({
         label: 'banklog:stamp:' + username + ':score=' + score,
         run: () => _stampBankLog(username, tokenId, stampData),
