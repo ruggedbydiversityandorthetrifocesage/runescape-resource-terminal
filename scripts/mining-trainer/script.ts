@@ -209,7 +209,7 @@ async function walkSmallSteps(
         await sdk.sendWalk(nextX, nextZ, true);
 
         // Wait for movement
-        await new Promise(r => setTimeout(r, 800));
+        await sdk.waitForTicks(1);
 
         // Check if we moved
         const newState = ctx.sdk.getState();
@@ -223,7 +223,7 @@ async function walkSmallSteps(
                 const jitterX = nextX + Math.round((Math.random() - 0.5) * 4);
                 const jitterZ = nextZ + Math.round((Math.random() - 0.5) * 4);
                 await sdk.sendWalk(jitterX, jitterZ, true);
-                await new Promise(r => setTimeout(r, 800));
+                await sdk.waitForTicks(1);
             }
         }
     }
@@ -276,7 +276,7 @@ async function walkWithWaypoints(
         log(`Waypoint ${i + 1}: now at (${currentX}, ${currentZ}), ${dist.toFixed(0)} tiles from target`);
 
         // Brief pause between waypoints
-        await new Promise(r => setTimeout(r, 300));
+        await sdk.waitForTicks(1);
     }
 
     const finalState = ctx.sdk.getState();
@@ -375,7 +375,7 @@ async function main() {
             while (true) {
                 const state = ctx.sdk.getState();
                 if (!state?.player) {
-                    await new Promise(r => setTimeout(r, 1000));
+                    await sdk.waitForTicks(1);
                     continue;
                 }
 
@@ -396,7 +396,7 @@ async function main() {
                 // Dismiss any dialogs (level-up messages)
                 if (state.dialog.isOpen) {
                     await sdk.sendClickDialog(0);
-                    await new Promise(r => setTimeout(r, 300));
+                    await sdk.waitForTicks(1);
                     continue;
                 }
 
@@ -422,7 +422,7 @@ async function main() {
                         await walkSmallSteps(ctx, actualMineLocation.x, actualMineLocation.z, 8);
                     } else {
                         log('No rocks nearby, waiting for respawn...');
-                        await new Promise(r => setTimeout(r, 1500));
+                        await sdk.waitForTicks(3);
                     }
                     continue;
                 }
@@ -474,7 +474,7 @@ async function main() {
                         return;  // Exit script - wrong mine location
                     }
 
-                    await new Promise(r => setTimeout(r, 2000));
+                    await sdk.waitForTicks(3);
                     continue;
                 }
 
@@ -490,7 +490,7 @@ async function main() {
                 if (!mineResult.success) {
                     log(`Mine action failed: ${mineResult.message}`);
                     consecutiveFailures++;
-                    await new Promise(r => setTimeout(r, 500));
+                    await sdk.waitForTicks(1);
                     continue;
                 }
 
@@ -521,7 +521,7 @@ async function main() {
                     log(`Mining timeout (failure ${consecutiveFailures}/${MAX_FAILURES})`);
                 }
 
-                await new Promise(r => setTimeout(r, 200));
+                await sdk.waitForTicks(1);
             }
         }, {
             connection: { bot: session.bot, sdk: session.sdk },

@@ -8,13 +8,15 @@
 import { BotSDK, deriveGatewayUrl } from './sdk/index';
 import { BotActions } from './sdk/actions';
 import type { NearbyLoc } from './sdk/types';
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 // Woodcutting
 const DRAYNOR_WILLOWS        = { x: 3087, z: 3235 };
+const LUMBRIDGE_WILLOWS      = { x: 3226, z: 3241 }; // Two willows east of general store
+const LUMBRIDGE_SATOSHI_BANK = { x: 3222, z: 3223 }; // Satoshi bank booths, Lumbridge courtyard
 const DRAYNOR_BANK           = { x: 3092, z: 3243 };
 const EDGEVILLE_YEWS         = { x: 3087, z: 3470 }; // WCPro2: primary yew tree
 const EDGEVILLE_YEWS2        = { x: 3087, z: 3481 }; // WCPro2: secondary yew tree
@@ -74,10 +76,6 @@ const SEWER_MOSS_GIANT     = { x: 3158, z: 9906 }; // underground fighting tile
 const SEWER_LADDER_UP      = { x: 3237, z: 9858 }; // ladder back to surface (approx)
 const SEWER_FIGHT_RADIUS   = 15;
 
-// Barbarian Village coal mine — south side of village, Edgeville bank
-const BARB_COAL_MINE        = { x: 3082, z: 3422 }; // coal rocks in village (verify ID 2096)
-const BARB_COAL_MINE_RADIUS = 20;
-
 // Runite Mining — Wilderness Lava Maze (~level 46 Wilderness)
 const WILDY_RUNITE_1       = { x: 3054, z: 3887 }; // Lava Maze runite rock #1
 const WILDY_RUNITE_2       = { x: 3056, z: 3889 }; // Lava Maze runite rock #2
@@ -95,7 +93,6 @@ type Job =
     | 'mining_all'          // Mining Guild — All ores (mithril > coal)
     | 'mining_coal'         // Mining Guild — Coal only
     | 'mining_mithril'      // Mining Guild — Mithril only
-    | 'mining_barb_coal'    // Mining — Barbarian Village coal → Edgeville bank
     | 'mining_varrock_east' // Mining — Varrock East mine (iron/copper/tin)
     | 'mining_varrock_west' // Mining — Varrock West mine (copper/tin)
     | 'mining_essence'      // Mining — Rune Essence via Aubury
@@ -107,11 +104,7 @@ type Job =
     | 'fishing_barb'        // Fishing — Barbarian Village (trout/salmon, fly)
     | 'combat_moss_giants'  // Combat — Moss Giants (Varrock Sewers, power fight)
     | 'mining_runite'       // Mining — Runite ore (Wilderness Lava Maze)
-    | 'fletching'           // Fletching — chop willows at Draynor, fletch bows, bank
-    | 'fletching_yew'       // Fletching — yew logs → yew shortbows/longbows (Edgeville)
-    | 'runecrafting_air'    // Runecrafting — rune essence → air altar → air runes, bank
-    | 'flax_pick'           // Crafting — pick flax at Seers' Village, bank
-    | 'flax_spin'           // Crafting — spin banked flax into bow strings at Seers' wheel
+    | 'wc_lumbridge'        // Willow trees — Lumbridge (east of general store, banks at Satoshi)
     | 'free_will';          // AI decides — equip gear, fight, mine, woodcut, bank
 
 // ─── Env loader ───────────────────────────────────────────────────────────────
@@ -147,6 +140,7 @@ interface BotState {
     lastProgress: number;  // timestamp of last meaningful action (for watchdog)
     restartCount: number;  // how many times the loop has auto-restarted
     pendingCmd: string | null; // one-shot manual command (e.g. 'bank', 'lumbridge', 'yews')
+    clientUrl: string;    // pre-built /bot?bot=...&password=... URL for background launch
 }
 
 const bots = new Map<string, BotState>();
@@ -171,7 +165,6 @@ function updateProgress(b: BotState) {
 
 function getLoop(b: BotState) {
     if (b.job === 'mining_all' || b.job === 'mining_coal' || b.job === 'mining_mithril') return miningLoop;
-    if (b.job === 'mining_barb_coal')    return miningBarbCoalLoop;
     if (b.job === 'mining_varrock_east') return miningVarrockEastLoop;
     if (b.job === 'mining_varrock_west') return miningVarrockWestLoop;
     if (b.job === 'mining_essence')      return miningEssenceLoop;
@@ -185,11 +178,7 @@ function getLoop(b: BotState) {
     if (b.job === 'fishing_barb')        return fishingBarbLoop;
     if (b.job === 'combat_moss_giants')  return mosGiantLoop;
     if (b.job === 'mining_runite')       return runiteLoop;
-    if (b.job === 'fletching')           return fletchingLoop;
-    if (b.job === 'fletching_yew')       return fletchingYewLoop;
-    if (b.job === 'runecrafting_air')    return runecraftingAirLoop;
-    if (b.job === 'flax_pick')           return flaxPickLoop;
-    if (b.job === 'flax_spin')           return flaxSpinLoop;
+    if (b.job === 'wc_lumbridge')        return willowLumbridgeLoop;
     if (b.job === 'free_will')           return freeWillLoop;
     return willowLoop; // 'wc' default
 }
@@ -245,7 +234,6 @@ const PRIMARY_SKILL: Record<Job, string> = {
     mining_all:          'Mining',
     mining_coal:         'Mining',
     mining_mithril:      'Mining',
-    mining_barb_coal:    'Mining',
     mining_varrock_east: 'Mining',
     mining_varrock_west: 'Mining',
     mining_essence:      'Mining',
@@ -257,11 +245,6 @@ const PRIMARY_SKILL: Record<Job, string> = {
     fishing_barb:        'Fishing',
     combat_moss_giants:  'Strength',
     mining_runite:       'Mining',
-    fletching:           'Fletching',
-    fletching_yew:       'Fletching',
-    runecrafting_air:    'Runecrafting',
-    flax_pick:           'Crafting',
-    flax_spin:           'Crafting',
     free_will:           'Strength',
 };
 
@@ -429,9 +412,13 @@ async function miningLoop(b: BotState) {
             let opened = { success: false, message: '' };
             for (let attempt = 1; attempt <= 4 && b.running; attempt++) {
                 await sleep(800);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/4 failed: ${opened.message} — retrying...`);
+                try {
+                    opened = await b.bot.openBank();
+                    if (opened.success) break;
+                    addLog(b, `Bank attempt ${attempt}/4 failed: ${opened.message} — retrying...`);
+                } catch (e: any) {
+                    addLog(b, `Bank error attempt ${attempt}/4: ${e?.message ?? e}`);
+                }
                 // Walk closer to banker on each retry
                 const nudge = [
                     { x: 3017, z: 3355 }, // banker tile
@@ -447,9 +434,9 @@ async function miningLoop(b: BotState) {
                 addLog(b, `Bank failed after 4 attempts — heading back to mine`);
                 await sleep(3000); // pause before heading back underground
             } else {
-                await b.bot.depositItem(/coal/i, -1);   // coal (exact item name "coal")
-                await b.bot.depositItem(/ore/i, -1);    // mithril ore, iron ore, etc.
-                await b.bot.closeBank();
+                try { await b.bot.depositItem(/coal/i, -1); } catch { /* keep going */ }
+                try { await b.bot.depositItem(/ore/i, -1); } catch { /* keep going */ }
+                try { await b.bot.closeBank(); } catch { /* keep going */ }
                 b.bankTrips++;
                 updateProgress(b);
                 setStatus(b, `Banked (trip #${b.bankTrips}) — returning to guild...`);
@@ -479,6 +466,25 @@ async function miningLoop(b: BotState) {
             if (b.mineOrigin && postClimb && postClimb.player.worldZ > 6000) {
                 setStatus(b, 'Walking to rocks...');
                 try { await b.bot.walkTo(b.mineOrigin.x, b.mineOrigin.z); } catch { /* keep going */ }
+            }
+            continue;
+        }
+
+        // ── SURFACE WITH NO ORE — need to go underground ─────────────────────
+        // If on surface with empty inventory, the banking section was skipped.
+        // Climb down the ladder to get back to the mining guild.
+        if (!underground && oreCount === 0) {
+            setStatus(b, 'On surface — climbing down to guild...');
+            const ladderPos = surfaceExitPos ?? GUILD_LADDER_FALLBACK;
+            try { await b.bot.walkTo(ladderPos.x, ladderPos.z, 2); } catch { /* keep going */ }
+            await sleep(300);
+            const ladderDown = b.sdk.getState()?.nearbyLocs.find(
+                loc => loc.optionsWithIndex.some(o => /climb.?down/i.test(o.text))
+            );
+            if (ladderDown) {
+                addLog(b, 'Climbing down to guild...');
+                await b.bot.interactLoc(ladderDown, 'climb-down');
+                await sleep(2000);
             }
             continue;
         }
@@ -614,17 +620,16 @@ async function combatLoop(b: BotState) {
             continue;
         }
 
-        // ── LOW HP — flee to Lumbridge, wait for FULL regen ─────────────────
-        if (hp > 0 && hp <= 5 && maxHp > 0) {
-            setStatus(b, `⚠️ Low HP (${hp}/${maxHp}) — fleeing to Lumbridge to regen!`);
-            try { await b.bot.walkTo(LUMBRIDGE.x, LUMBRIDGE.z); } catch { /* keep going */ }
+        // ── LOW HP — flee to bank and wait to regen ───────────────────────────
+        if (hp > 0 && hp <= 4 && maxHp > 0) {
+            setStatus(b, `⚠️ Low HP (${hp}/${maxHp}) — fleeing to Draynor!`);
+            try { await b.bot.walkTo(DRAYNOR_BANK.x, DRAYNOR_BANK.z); } catch { /* keep going */ }
             if (!b.running) break;
-            // Wait until HP is fully restored (check every 10s, up to 5min)
-            for (let i = 0; i < 30 && b.running; i++) {
+            // Wait for HP to regen (check every 10s for up to 3min)
+            for (let i = 0; i < 18 && b.running; i++) {
                 await sleep(10_000);
                 const healed = b.sdk.getState();
-                if (healed && healed.player.hp >= healed.player.maxHp) break;
-                setStatus(b, `Healing... (${healed?.player.hp ?? '?'}/${maxHp})`);
+                if (healed && healed.player.hp >= Math.min(10, maxHp)) break;
             }
             updateProgress(b);
             continue;
@@ -947,7 +952,7 @@ async function alKharidLoop(b: BotState) {
             for (let i = 0; i < 18 && b.running; i++) {
                 await sleep(10_000);
                 const healed = b.sdk.getState();
-                if (healed && healed.player.hp >= healed.player.maxHp) break;
+                if (healed && healed.player.hp >= Math.min(8, maxHp)) break;
             }
             updateProgress(b);
             continue;
@@ -1076,6 +1081,14 @@ async function checkAndRunCmd(b: BotState): Promise<boolean> {
         } else if (cmd === 'lumbridge') {
             setStatus(b, 'CMD: walking to Lumbridge...');
             await b.bot.walkTo(3222, 3218, 5);
+        } else if (cmd === 'falador') {
+            setStatus(b, 'CMD: walking to Falador...');
+            await b.bot.walkTo(2964, 3378, 5);
+        } else if (cmd === 'satoshi_teleport') {
+            setStatus(b, 'CMD: Satoshi teleport → Lumbridge...');
+            // Lumbridge Teleport spell (component 1167) — free & unlimited on this server
+            await b.sdk.sendClickComponent(1167);
+            await b.sdk.waitForTicks(4); // teleport animation
         } else if (cmd === 'yews') {
             setStatus(b, 'CMD: walking to Edgeville yews...');
             await b.bot.walkTo(3087, 3470, 5);
@@ -1098,6 +1111,32 @@ async function checkAndRunCmd(b: BotState): Promise<boolean> {
                 setStatus(b, `CMD: walking to (${gx}, ${gz})...`);
                 await b.bot.walkTo(gx, gz, 3);
             }
+        } else if (cmd === 'buy_pickaxe') {
+            // Sell junk at Draynor general store → buy bronze pickaxe from Bob's Axes Lumbridge
+            setStatus(b, 'CMD: selling ore at Draynor general store...');
+            await walkToLong(b, 3092, 3245);
+            await b.bot.walkTo(3092, 3245, 5);
+            try {
+                await b.bot.openShop();
+                const invBefore = b.sdk.getState()?.inventory ?? [];
+                const toSell = invBefore.filter(i => /ore|log|hide/i.test(i.name));
+                for (const item of toSell) {
+                    await b.bot.sellToShop(new RegExp('^' + item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), item.count);
+                }
+            } catch (e2: any) {
+                addLog(b, `CMD buy_pickaxe: sell step failed (${e2.message})`);
+            }
+            const coinsNow = b.sdk.getState()?.inventory?.find(i => /^coins?$/i.test(i.name));
+            if (!coinsNow || coinsNow.count < 1) {
+                addLog(b, 'CMD buy_pickaxe: no coins after selling — aborting pickaxe buy');
+            } else {
+                setStatus(b, `CMD: have ${coinsNow.count} gp — buying pickaxe at Bob's Axes...`);
+                await walkToLong(b, 3230, 3203);
+                await b.bot.walkTo(3230, 3203, 3);
+                await b.bot.openShop();
+                await b.bot.buyFromShop(/bronze pickaxe/i, 1);
+                addLog(b, 'CMD buy_pickaxe: done — pickaxe acquired!');
+            }
         }
     } catch (e: any) {
         addLog(b, `CMD error: ${e.message}`);
@@ -1113,76 +1152,174 @@ async function willowLoop(b: BotState) {
         if (await checkAndRunCmd(b)) continue;
         const state = b.sdk.getState();
         if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
 
-        const logs     = state.inventory.filter(i => /willow logs/i.test(i.name));
-        const logCount = logs.length;
-        const invFull  = state.inventory.length >= 27;
+        if (state.dialog?.isOpen) {
+            await b.bot.dismissBlockingUI();
+            continue;
+        }
 
-        // ── BANK ─────────────────────────────────────────────────────────────
-        if (invFull && logCount > 0) {
-            setStatus(b, `Banking ${logCount} willow logs at Draynor...`);
-            try { await b.bot.walkTo(DRAYNOR_BANK.x, DRAYNOR_BANK.z); } catch { await sleep(2000); continue; }
+        // Escape essence mine if somehow trapped there
+        if (isInEssenceMine(state.player.worldZ)) {
+            setStatus(b, 'Stuck in essence mine — exiting via portal...');
+            const portal = state.nearbyLocs.find(l => /portal|mine exit/i.test(l.name));
+            if (portal) {
+                const opt = portal.optionsWithIndex[0];
+                if (opt) await b.sdk.sendInteractLoc(portal.x, portal.z, portal.id, opt.opIndex);
+            }
+            await sleep(5000);
+            continue;
+        }
+
+        const invFull = state.inventory.length >= 27; // bank with 1 slot spare — avoids wasted chop when nearly full
+
+        if (invFull) {
+            const logCount = state.inventory.filter(i => /willow/i.test(i.name)).length;
+            setStatus(b, `Inventory full (${logCount} willow logs) — banking...`);
+
+            await walkToLong(b, DRAYNOR_BANK.x, DRAYNOR_BANK.z);
+            try { await b.bot.walkTo(DRAYNOR_BANK.x, DRAYNOR_BANK.z, 3); } catch { /* keep going */ }
             if (!b.running) break;
 
             let opened = { success: false, message: '' };
             for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(600);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3: ${opened.message}`);
+                try {
+                    opened = await b.bot.openBank();
+                    if (opened.success) break;
+                    addLog(b, `Bank attempt ${attempt}/3: ${opened.message}`);
+                } catch (e: any) {
+                    addLog(b, `Bank error attempt ${attempt}/3: ${e?.message ?? e}`);
+                }
                 await sleep(1000);
             }
             if (!opened.success) {
-                addLog(b, `Bank failed — dropping logs and continuing`);
-                const toDrop = b.sdk.getState()?.inventory.filter(i => /willow logs/i.test(i.name)) ?? [];
-                for (const item of toDrop) { await b.sdk.sendDropItem(item.slot); await sleep(100); }
-                updateProgress(b);
-            } else {
-                await b.bot.depositItem(/willow logs/i, -1);
-                await b.bot.closeBank();
-                b.bankTrips++;
-                updateProgress(b);
-                setStatus(b, `Banked trip #${b.bankTrips} — returning to willows...`);
+                addLog(b, `Failed to open bank — retrying next cycle`);
+                await sleep(1000);
+                continue;
             }
-            try { await b.bot.walkTo(DRAYNOR_WILLOWS.x, DRAYNOR_WILLOWS.z); } catch { await sleep(2000); }
+
+            try { await b.bot.depositItem(/willow logs/i, -1); } catch { /* keep going */ }
+            try { await b.bot.closeBank(); } catch { /* keep going */ }
+            b.bankTrips++;
+            updateProgress(b);
+            setStatus(b, `Banked (trip #${b.bankTrips}) — returning to willows...`);
+            try { await b.bot.walkTo(DRAYNOR_WILLOWS.x, DRAYNOR_WILLOWS.z); } catch { /* keep going */ }
             continue;
         }
 
-        // ── WALK TO WILLOWS if drifted ────────────────────────────────────────
         const px = state.player.worldX;
         const pz = state.player.worldZ;
         const dist = Math.hypot(px - DRAYNOR_WILLOWS.x, pz - DRAYNOR_WILLOWS.z);
         if (dist > MAX_DRIFT) {
-            setStatus(b, `Walking to willow trees... (${Math.round(dist)} tiles away)`);
-            try {
-                await b.bot.walkTo(DRAYNOR_WILLOWS.x, DRAYNOR_WILLOWS.z);
-            } catch {
-                addLog(b, `Walk failed — waiting 3s before retry`);
-                await sleep(3000); // prevent spin on path failure
-            }
+            setStatus(b, 'Walking to willow trees...');
+            await walkToLong(b, DRAYNOR_WILLOWS.x, DRAYNOR_WILLOWS.z);
+            try { await b.bot.walkTo(DRAYNOR_WILLOWS.x, DRAYNOR_WILLOWS.z, 3); } catch { /* keep going */ }
+            await sleep(1000);
             continue;
         }
 
-        // ── FIND WILLOW ───────────────────────────────────────────────────────
-        // scanNearbyLocs for wider range; tree name is "Willow" in 2004 cache
-        const nearby = await b.sdk.scanNearbyLocs(15);
-        const willow = nearby.find(loc =>
-            /willow/i.test(loc.name) &&
-            loc.optionsWithIndex.some(o => /chop/i.test(o.text))
-        ) ?? b.sdk.findNearbyLoc(/willow/i) as NearbyLoc | undefined;
-
+        const willow = b.sdk.findNearbyLoc(/^willow$/i) as NearbyLoc | undefined;
         if (!willow) {
-            setStatus(b, `No willow in range — waiting...`);
-            await sleep(2000);
+            setStatus(b, 'No willow nearby — waiting...');
+            await sleep(1200);
             continue;
         }
 
-        setStatus(b, `Chopping willow — ${logCount}/27 logs`);
+        const logCount = state.inventory.filter(i => /willow/i.test(i.name)).length;
+        setStatus(b, `Chopping willow — ${logCount}/28 logs`);
+
         const result = await b.bot.chopTree(willow);
         if (!result.success) {
             addLog(b, `Chop failed: ${result.message}`);
+            await sleep(600);
+        } else {
+            updateProgress(b);
+        }
+    }
+
+    setStatus(b, 'idle');
+    addLog(b, 'Bot stopped.');
+}
+
+// ─── Lumbridge Willow Woodcutter ───────────────────────────────────────────
+// Two willows east of the general store. Banks at Satoshi's booths (30 tiles away).
+async function willowLumbridgeLoop(b: BotState) {
+    setStatus(b, 'Starting Lumbridge willow woodcutter...');
+
+    while (b.running) {
+        if (await checkAndRunCmd(b)) continue;
+        const state = b.sdk.getState();
+        if (!state) { await sleep(1000); continue; }
+
+        if (state.dialog?.isOpen) {
+            await b.bot.dismissBlockingUI();
+            continue;
+        }
+
+        const invFull = state.inventory.length >= 27;
+
+        if (invFull) {
+            const logCount = state.inventory.filter(i => /willow/i.test(i.name)).length;
+            setStatus(b, `Inventory full (${logCount} logs) — banking at Satoshi...`);
+
+            try { await b.bot.walkTo(LUMBRIDGE_SATOSHI_BANK.x, LUMBRIDGE_SATOSHI_BANK.z, 2); } catch { /* keep going */ }
+            if (!b.running) break;
+
+            let opened = { success: false, message: '' };
+            for (let attempt = 1; attempt <= 5 && b.running; attempt++) {
+                await sleep(500);
+                try {
+                    opened = await b.bot.openBank();
+                    if (opened.success) break;
+                    addLog(b, `Bank attempt ${attempt}/5: ${opened.message}`);
+                } catch (e: any) {
+                    addLog(b, `Bank error attempt ${attempt}/5: ${e?.message ?? e}`);
+                }
+                if (attempt === 3) {
+                    try { await b.bot.walkTo(LUMBRIDGE_SATOSHI_BANK.x, LUMBRIDGE_SATOSHI_BANK.z, 1); } catch { /* keep going */ }
+                }
+                await sleep(800);
+            }
+
+            if (!opened.success) {
+                addLog(b, 'Failed to open bank — retrying next cycle');
+                await sleep(1000);
+                continue;
+            }
+
+            try { await b.bot.depositItem(/willow logs/i, -1); } catch { /* keep going */ }
+            try { await b.bot.closeBank(); } catch { /* keep going */ }
+            b.bankTrips++;
+            updateProgress(b);
+            setStatus(b, `Banked (trip #${b.bankTrips}) — returning to willows...`);
+            try { await b.bot.walkTo(LUMBRIDGE_WILLOWS.x, LUMBRIDGE_WILLOWS.z, 5); } catch { /* keep going */ }
+            continue;
+        }
+
+        // Return to tree area if drifted
+        const px = state.player.worldX;
+        const pz = state.player.worldZ;
+        const dist = Math.hypot(px - LUMBRIDGE_WILLOWS.x, pz - LUMBRIDGE_WILLOWS.z);
+        if (dist > MAX_DRIFT) {
+            setStatus(b, 'Walking to Lumbridge willows...');
+            try { await b.bot.walkTo(LUMBRIDGE_WILLOWS.x, LUMBRIDGE_WILLOWS.z, 5); } catch { /* keep going */ }
+            await sleep(800);
+            continue;
+        }
+
+        const willow = b.sdk.findNearbyLoc(/^willow$/i) as NearbyLoc | undefined;
+        if (!willow) {
+            setStatus(b, 'No willow nearby — waiting for respawn...');
             await sleep(1500);
+            continue;
+        }
+
+        const logCount = state.inventory.filter(i => /willow/i.test(i.name)).length;
+        setStatus(b, `Chopping willow — ${logCount}/28 logs`);
+
+        const result = await b.bot.chopTree(willow);
+        if (!result.success) {
+            addLog(b, `Chop failed: ${result.message}`);
+            await sleep(600);
         } else {
             updateProgress(b);
         }
@@ -1242,7 +1379,7 @@ async function waitForChop(b: BotState, logsBefore: number, timeoutMs = 90_000):
         await sleep(1200);
         const ns = b.sdk.getState();
         if (!ns) break;
-        if (ns.inventory.length >= 27) break; // full — bank time
+        if (ns.inventory.length >= 28) break; // full — bank time
         const curLogs = ns.inventory.filter(i => /yew/i.test(i.name)).length;
         if (curLogs > lastLogs) { lastLogs = curLogs; idleTicks = 0; updateProgress(b); continue; }
         if (ns.player.animId === -1) {
@@ -1334,10 +1471,11 @@ async function yewLoop(b: BotState) {
         }
 
         setStatus(b, `Chopping yew — ${logCount}/27 logs`);
-        const result = await b.bot.chopTree(yew);
+        let result = { success: false, message: '' };
+        try { result = await b.bot.chopTree(yew); } catch (e: any) { result = { success: false, message: e?.message ?? String(e) }; }
         if (!result.success) {
             addLog(b, `Chop failed: ${result.message}`);
-            await sleep(800);
+            await sleep(5000 + Math.random() * 5000);
         } else {
             updateProgress(b);
             // Stay on the tree — yews take many ticks per log
@@ -1366,7 +1504,7 @@ async function yewVarrockLoop(b: BotState) {
         }
 
         const logCount = state.inventory.filter(i => /yew/i.test(i.name)).length;
-        const invFull  = state.inventory.length >= 27;
+        const invFull  = state.inventory.length >= 28;
         const shouldBank = invFull || logCount >= 20;
 
         if (shouldBank) {
@@ -1394,11 +1532,13 @@ async function yewVarrockLoop(b: BotState) {
                 const junk = b.sdk.getState()?.inventory.filter(i => !/yew/i.test(i.name)) ?? [];
                 for (const item of junk.slice(0, 10)) { await b.sdk.sendDropItem(item.slot); await sleep(80); }
             } else {
+                // Deposit yew logs first, then deposit any remaining non-gear junk
                 await b.bot.depositItem(/yew logs/i, -1);
-                if (logCount === 0) {
-                    const inv = b.sdk.getState()?.inventory ?? [];
-                    for (const item of inv) {
-                        await b.bot.depositItem(new RegExp(item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), -1);
+                const keepGearYew = /axe|helm|shield|sword|armor|armour|gloves|boots|legs|body|cape|amulet|ring/i;
+                const invAfter = b.sdk.getState()?.inventory ?? [];
+                for (const item of invAfter) {
+                    if (!keepGearYew.test(item.name)) {
+                        await b.bot.depositItem(new RegExp('^' + item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), -1);
                     }
                 }
                 await b.bot.closeBank();
@@ -1429,21 +1569,28 @@ async function yewVarrockLoop(b: BotState) {
         ) as NearbyLoc | undefined;
 
         if (!yew) {
-            // Both trees down — wait for respawn, try secondary position
+            // Both trees down — wait for respawn (~100s), poll every 10s to avoid walk spam
             setStatus(b, 'No choppable yew nearby — waiting for respawn...');
-            // Alternate between the two tree spots while waiting
             const altPos = Math.hypot(px - VARROCK_CASTLE_YEWS2.x, pz - VARROCK_CASTLE_YEWS2.z) > 5
                 ? VARROCK_CASTLE_YEWS2 : VARROCK_CASTLE_YEWS;
             try { await b.bot.walkTo(altPos.x, altPos.z); } catch { /* keep going */ }
-            await sleep(6000);
+            await sleep(10_000);
             continue;
         }
 
-        setStatus(b, `Chopping Varrock yew — ${logCount}/27 logs`);
-        const result = await b.bot.chopTree(yew);
+        setStatus(b, `Chopping Varrock yew — ${logCount}/28 logs`);
+        let result = { success: false, message: '' };
+        try { result = await b.bot.chopTree(yew); } catch (e: any) { result = { success: false, message: e?.message ?? String(e) }; }
         if (!result.success) {
             addLog(b, `Chop failed: ${result.message}`);
-            await sleep(800);
+            // Back off and move to alternate tree so competing bots desync
+            const ns = b.sdk.getState();
+            const npx = ns?.player.worldX ?? px;
+            const npz = ns?.player.worldZ ?? pz;
+            const altPos = Math.hypot(npx - VARROCK_CASTLE_YEWS2.x, npz - VARROCK_CASTLE_YEWS2.z) > 3
+                ? VARROCK_CASTLE_YEWS2 : VARROCK_CASTLE_YEWS;
+            try { await b.bot.walkTo(altPos.x, altPos.z); } catch { /* keep going */ }
+            await sleep(5000 + Math.random() * 5000);
         } else {
             updateProgress(b);
             await waitForChop(b, logCount);
@@ -1454,147 +1601,12 @@ async function yewVarrockLoop(b: BotState) {
     addLog(b, 'Bot stopped.');
 }
 
-// ─── Mining — Barbarian Village coal ─────────────────────────────────────────
-// Coal rocks in/around Barbarian Village → Edgeville bank.
-// Uses coal rock ID 2096 (confirmed at Al Kharid; same on most RS2 servers).
-// Falls back to any minable rock if no 2096 rocks are visible.
-async function miningBarbCoalLoop(b: BotState) {
-    setStatus(b, 'Starting Barbarian Village coal miner...');
-    const COAL_ID = 2096;
-    const skipRocks = new Map<string, number>();
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const isOre    = (name: string) => /(ore$|^coal$|^tin$|^copper$)/i.test(name);
-        const oreCount  = state.inventory.filter(i => isOre(i.name)).length;
-        const shouldBank = state.inventory.length >= 24 || oreCount >= 18;
-
-        // ── BANK at Edgeville ─────────────────────────────────────────────────
-        if (shouldBank && oreCount > 0) {
-            setStatus(b, `Banking ${oreCount} ore at Edgeville...`);
-            try { await b.bot.walkTo(EDGEVILLE_BANK.x, EDGEVILLE_BANK.z, 1); } catch { /* keep going */ }
-            if (!b.running) break;
-            await sleep(600);
-
-            let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 4 && b.running; attempt++) {
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/4: ${opened.message}`);
-                await sleep(800);
-            }
-
-            if (!opened.success) {
-                addLog(b, 'Bank failed — dropping ores and resetting');
-                for (const item of b.sdk.getState()?.inventory.filter(i => isOre(i.name)) ?? []) {
-                    await b.sdk.sendDropItem(item.slot); await sleep(100);
-                }
-            } else {
-                await b.bot.depositItem(/ore/i, -1);
-                await b.bot.depositItem(/^coal$/i, -1);
-                await b.bot.depositItem(/^tin$/i, -1);
-                await b.bot.depositItem(/^copper$/i, -1);
-                await b.bot.closeBank();
-                b.bankTrips++;
-                updateProgress(b);
-                setStatus(b, `Banked coal trip #${b.bankTrips} — walking back to mine...`);
-            }
-
-            try { await b.bot.walkTo(BARB_COAL_MINE.x, BARB_COAL_MINE.z, 5); } catch { /* keep going */ }
-            continue;
-        }
-
-        // ── WALK to mine if drifted ───────────────────────────────────────────
-        const px = state.player.worldX;
-        const pz = state.player.worldZ;
-        const dist = Math.hypot(px - BARB_COAL_MINE.x, pz - BARB_COAL_MINE.z);
-        if (dist > BARB_COAL_MINE_RADIUS) {
-            setStatus(b, `Walking to Barbarian Village coal mine... (${Math.round(dist)} tiles)`);
-            try { await b.bot.walkTo(BARB_COAL_MINE.x, BARB_COAL_MINE.z); } catch { await sleep(2000); }
-            continue;
-        }
-
-        // ── MINE ─────────────────────────────────────────────────────────────
-        const now = Date.now();
-        for (const [k, exp] of skipRocks) if (now > exp) skipRocks.delete(k);
-
-        // Prefer coal rocks by ID (2096), fall back to any minable rock
-        const mineableRocks = state.nearbyLocs
-            .filter(loc =>
-                loc.optionsWithIndex.some(o => /^mine$/i.test(o.text)) &&
-                !skipRocks.has(`${loc.x},${loc.z}`)
-            )
-            .sort((a, c) => {
-                // coal ID first, then closest
-                const isCoalA = a.id === COAL_ID ? 0 : 1;
-                const isCoalC = c.id === COAL_ID ? 0 : 1;
-                return isCoalA !== isCoalC ? isCoalA - isCoalC : a.distance - c.distance;
-            });
-
-        const target = mineableRocks[0] as NearbyLoc | undefined;
-        if (!target) {
-            setStatus(b, 'No coal rocks visible — waiting...');
-            await sleep(4000);
-            continue;
-        }
-
-        const label = target.id === COAL_ID ? 'coal' : 'rock';
-        setStatus(b, `Mining ${label} at (${target.x},${target.z}) — ${coalCount} coal so far`);
-
-        if (target.distance > 3) {
-            try { await b.bot.walkTo(target.x, target.z, 2); } catch { /* ok */ }
-        }
-
-        const result = await b.bot.interactLoc(target, 'mine');
-        if (!result.success) {
-            const skipMs = /reach|stuck/i.test(result.message) ? 12_000 : 20_000;
-            skipRocks.set(`${target.x},${target.z}`, Date.now() + skipMs);
-            addLog(b, `Skip (${target.x},${target.z}) ${skipMs / 1000}s: ${result.message}`);
-            await sleep(300);
-            continue;
-        }
-
-        // Wait for swing animation → ore gained
-        await sleep(1800);
-        const mineStart  = Date.now();
-        let lastOreCount = b.sdk.getState()?.inventory.filter(i => isOre(i.name)).length ?? oreCount;
-        let idleTicks    = 0;
-
-        while (Date.now() - mineStart < 40_000 && b.running) {
-            await sleep(1000);
-            const ns = b.sdk.getState();
-            if (!ns || ns.inventory.length >= 28) break;
-            const cur = ns.inventory.filter(i => isOre(i.name)).length;
-            if (cur > lastOreCount) { lastOreCount = cur; idleTicks = 0; updateProgress(b); continue; }
-            const isIdle = ns.player.animId === -1;
-            if (isIdle) {
-                idleTicks++;
-                if (idleTicks >= 2) {
-                    if (cur === oreCount) {
-                        skipRocks.set(`${target.x},${target.z}`, Date.now() + 20_000);
-                        addLog(b, `Rock depleted — skipping 20s`);
-                    }
-                    break;
-                }
-            } else { idleTicks = 0; }
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
 // ─── Mining — Varrock East ────────────────────────────────────────────────────
-// SE Varrock mine (iron/copper/tin) → Varrock East bank (3253,3421)
-// Walk direct — pathfinder handles the route, no manual waypoints needed.
+// SE Varrock mine (iron/copper/tin) → Varrock West bank
 
 async function miningVarrockEastLoop(b: BotState) {
     setStatus(b, 'Starting Varrock East miner...');
-    const skipRocks = new Map<string, number>(); // "x,z" → expiry timestamp
+    const skipRocks = new Map<string, number>();
 
     while (b.running) {
         if (await checkAndRunCmd(b)) continue;
@@ -1604,64 +1616,101 @@ async function miningVarrockEastLoop(b: BotState) {
 
         const isOre = (name: string) => /(ore$|^coal$|^tin$|^copper$)/i.test(name);
         const oreCount = state.inventory.filter(i => isOre(i.name)).length;
-        // Bank when 24+ items in inventory OR 18+ ores — leaves enough margin
-        const shouldBank = state.inventory.length >= 24 || oreCount >= 18;
+        const invFull  = state.inventory.length >= 28;
 
-        // ── BANK at Varrock East bank ─────────────────────────────────────────
-        if (shouldBank && oreCount > 0) {
-            setStatus(b, `Banking ${oreCount} ore — walking to Varrock East bank...`);
+        // ── BANK ─────────────────────────────────────────────────────────────
+        if (invFull || oreCount >= 24) {
+            setStatus(b, `Full (${oreCount} ore) — banking at Varrock West...`);
 
-            // Walk directly — no waypoints, pathfinder routes around walls fine
-            try { await b.bot.walkTo(VARROCK_EAST_BANK.x, VARROCK_EAST_BANK.z, 1); } catch { /* keep going */ }
+            // Pre-step: approach the SE Varrock gate and open it before waypoint walking.
+            // The gate at ~(3273,3380) is ~19 tiles from the mine start, too far for the
+            // per-waypoint distance-4 check. Walk to just south of it first, then open it.
+            try { await b.bot.walkTo(3280, 3374, 5); } catch { /* keep going */ }
+            await sleep(300);
+            const seGate = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 10);
+            if (seGate) {
+                try { await b.bot.openDoor(seGate); await sleep(700); } catch { /* keep going */ }
+            }
+
+            for (const wp of VARROCK_EAST_BANK_WPS) {
+                if (!b.running) break;
+                // Open any door/gate blocking the path before each waypoint step (wider scan)
+                const nearDoor = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 8);
+                if (nearDoor) { try { await b.bot.openDoor(nearDoor); await sleep(500); } catch { /* keep going */ } }
+                try { await b.bot.walkTo(wp.x, wp.z, 5); } catch { /* keep going */ }
+                await sleep(400);
+                // Check door AFTER walking (bot may have stopped in front of a closed gate)
+                const afterDoor = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 5);
+                if (afterDoor) { try { await b.bot.openDoor(afterDoor); await sleep(600); } catch { /* keep going */ } }
+            }
             if (!b.running) break;
-            await sleep(600);
+            try { await b.bot.walkTo(VARROCK_WEST_BANK.x, VARROCK_WEST_BANK.z); } catch { /* keep going */ }
 
             let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 5 && b.running; attempt++) {
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/5: ${opened.message}`);
-                // Step slightly closer each retry
-                const tries = [
-                    { x: 3253, z: 3421 },
-                    { x: 3253, z: 3420 },
-                    { x: 3254, z: 3421 },
-                    { x: 3252, z: 3421 },
-                    { x: 3253, z: 3422 },
-                ];
-                try { await b.bot.walkTo(tries[attempt - 1]!.x, tries[attempt - 1]!.z, 0); } catch { /* ok */ }
+            for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
                 await sleep(800);
+                try {
+                    opened = await b.bot.openBank();
+                    if (opened.success) break;
+                    addLog(b, `Bank attempt ${attempt}/3 failed: ${opened.message} — retrying...`);
+                } catch (e: any) {
+                    addLog(b, `Bank error attempt ${attempt}/3: ${e?.message ?? e}`);
+                }
+                await sleep(1200);
             }
 
             if (!opened.success) {
-                addLog(b, `Bank failed 5 times — dropping ores and resetting`);
-                for (const item of b.sdk.getState()?.inventory.filter(i => isOre(i.name)) ?? []) {
-                    await b.sdk.sendDropItem(item.slot); await sleep(100);
-                }
-                updateProgress(b);
+                addLog(b, `Bank failed — heading back to mine`);
+                await sleep(2000);
             } else {
-                await b.bot.depositItem(/ore/i, -1);
-                await b.bot.depositItem(/^coal$/i, -1);
-                await b.bot.depositItem(/^tin$/i, -1);
-                await b.bot.depositItem(/^copper$/i, -1);
-                await b.bot.closeBank();
+                // Deposit all ore/resources — exact name match per slot so nothing is left behind
+                const keepGear = /pickaxe|axe|helm|shield|sword|armor|armour|gloves|boots|legs|body|cape|amulet|ring/i;
+                const mineInv1 = b.sdk.getState()?.inventory ?? [];
+                for (const name of [...new Set(mineInv1.filter(i => !keepGear.test(i.name)).map(i => i.name))]) {
+                    try { await b.bot.depositItem(new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), -1); } catch { /* keep going */ }
+                }
+                try { await b.bot.closeBank(); } catch { /* keep going */ }
                 b.bankTrips++;
                 updateProgress(b);
-                setStatus(b, `Banked trip #${b.bankTrips} — walking back to mine...`);
+                setStatus(b, `Banked (trip #${b.bankTrips}) — returning to mine...`);
             }
 
-            // Walk directly back to mine
-            try { await b.bot.walkTo(VARROCK_EAST_MINE.x, VARROCK_EAST_MINE.z, 5); } catch { /* keep going */ }
+            // Return via waypoints — open gate when heading back out of Varrock too
+            for (const wp of VARROCK_EAST_MINE_WPS) {
+                if (!b.running) break;
+                const nearDoor2 = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 8);
+                if (nearDoor2) { try { await b.bot.openDoor(nearDoor2); await sleep(500); } catch { /* keep going */ } }
+                try { await b.bot.walkTo(wp.x, wp.z, 5); } catch { /* keep going */ }
+                await sleep(400);
+                const afterDoor2 = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 5);
+                if (afterDoor2) { try { await b.bot.openDoor(afterDoor2); await sleep(600); } catch { /* keep going */ } }
+            }
+            try { await b.bot.walkTo(VARROCK_EAST_MINE.x, VARROCK_EAST_MINE.z, 8); } catch { /* keep going */ }
             continue;
         }
 
-        // ── WALK TO MINE if drifted ───────────────────────────────────────────
+        // ── POSITION CHECK ───────────────────────────────────────────────────
         const px = state.player.worldX;
         const pz = state.player.worldZ;
         const dist = Math.hypot(px - VARROCK_EAST_MINE.x, pz - VARROCK_EAST_MINE.z);
         if (dist > MAX_DRIFT) {
-            setStatus(b, `Walking to Varrock East mine... (${Math.round(dist)} tiles away)`);
-            try { await b.bot.walkTo(VARROCK_EAST_MINE.x, VARROCK_EAST_MINE.z); } catch { /* keep going */ }
+            setStatus(b, 'Walking to Varrock East mine...');
+            // Use waypoints to avoid blocked doors through Varrock centre
+            // Re-read position after each walkTo so skip logic uses current position
+            for (const wp of VARROCK_EAST_MINE_WPS) {
+                if (!b.running) break;
+                const cur = b.sdk.getState()?.player;
+                const curDist = cur ? Math.hypot(cur.worldX - wp.x, cur.worldZ - wp.z) : 999;
+                if (curDist < 15) continue; // already past this waypoint
+                const nearDoor3 = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 8);
+                if (nearDoor3) { try { await b.bot.openDoor(nearDoor3); await sleep(500); } catch { /* keep going */ } }
+                try { await b.bot.walkTo(wp.x, wp.z, 5); } catch { /* keep going */ }
+                await sleep(500);
+                const afterDoor3 = b.sdk.getState()?.nearbyLocs.find(l => /^(door|gate)$/i.test(l.name) && l.distance <= 5);
+                if (afterDoor3) { try { await b.bot.openDoor(afterDoor3); await sleep(600); } catch { /* keep going */ } }
+            }
+            try { await b.bot.walkTo(VARROCK_EAST_MINE.x, VARROCK_EAST_MINE.z, 8); } catch { /* keep going */ }
+            await sleep(1000);
             continue;
         }
 
@@ -1669,82 +1718,62 @@ async function miningVarrockEastLoop(b: BotState) {
         const now = Date.now();
         for (const [k, exp] of skipRocks) if (now > exp) skipRocks.delete(k);
 
-        // Prioritise iron (IDs 2092/2095) > copper (2090/2091) > tin (2093/2094)
-        const IRON_IDS   = [2092, 2095];
-        const COPPER_IDS = [2090, 2091];
-        const mineable = state.nearbyLocs
-            .filter(loc =>
-                loc.optionsWithIndex.some(o => /^mine$/i.test(o.text)) &&
-                !skipRocks.has(`${loc.x},${loc.z}`)
-            )
-            .sort((a, c) => {
-                const scoreA = IRON_IDS.includes(a.id) ? 0 : COPPER_IDS.includes(a.id) ? 1 : 2;
-                const scoreC = IRON_IDS.includes(c.id) ? 0 : COPPER_IDS.includes(c.id) ? 1 : 2;
-                return scoreA !== scoreC ? scoreA - scoreC : a.distance - c.distance;
-            });
+        const IRON_IDS = new Set([2092, 2095]);
+        const mineable = state.nearbyLocs.filter(loc =>
+            loc.optionsWithIndex.some(o => /^mine$/i.test(o.text)) &&
+            !skipRocks.has(`${loc.x},${loc.z}`)
+        ).sort((a, c) => {
+            // Iron rocks first, then by distance
+            const aIron = IRON_IDS.has(a.id) ? 0 : 1;
+            const cIron = IRON_IDS.has(c.id) ? 0 : 1;
+            if (aIron !== cIron) return aIron - cIron;
+            return a.distance - c.distance;
+        });
 
         const target = mineable[0] as NearbyLoc | undefined;
         if (!target) {
             const nextExpiry = [...skipRocks.entries()].sort((a, c) => a[1] - c[1])[0];
             const waitMs = nextExpiry ? Math.max(1000, nextExpiry[1] - Date.now()) : 5000;
-            setStatus(b, `All rocks depleted — waiting ${Math.ceil(waitMs / 1000)}s...`);
+            setStatus(b, `No rocks — waiting ${Math.ceil(waitMs / 1000)}s...`);
             await sleep(Math.min(waitMs, 5000));
             continue;
         }
 
-        const oreLabel = IRON_IDS.includes(target.id) ? 'iron' : COPPER_IDS.includes(target.id) ? 'copper' : 'tin';
-        setStatus(b, `Mining ${oreLabel} at (${target.x},${target.z}) — ${oreCount}/27 ore`);
-
+        const oreLabel = IRON_IDS.has(target.id) ? 'iron' : target.name;
+        setStatus(b, `Mining ${oreLabel} (${oreCount} ore)...`);
         if (target.distance > 3) {
             try { await b.bot.walkTo(target.x, target.z, 2); } catch { /* keep going */ }
         }
 
         const result = await b.bot.interactLoc(target, 'mine');
         if (!result.success) {
-            const skipMs = /reach|stuck/i.test(result.message) ? 12_000 : 20_000;
-            skipRocks.set(`${target.x},${target.z}`, Date.now() + skipMs);
-            addLog(b, `Skip (${target.x},${target.z}) ${skipMs / 1000}s: ${result.message}`);
+            const isCantReach = /reach|stuck/i.test(result.message);
+            skipRocks.set(`${target.x},${target.z}`, Date.now() + (isCantReach ? 12_000 : 20_000));
+            addLog(b, `Skip rock (${target.x},${target.z}): ${result.message}`);
             await sleep(300);
             continue;
         }
 
-        // Wait for mining to complete — watch anim (625 = mining) and ore count
-        await sleep(1800);
-        const mineStart  = Date.now();
+        await sleep(2000);
+        const mineStart = Date.now();
         let lastOreCount = b.sdk.getState()?.inventory.filter(i => isOre(i.name)).length ?? oreCount;
-        let idleTicks    = 0;
-
-        while (Date.now() - mineStart < 40_000 && b.running) {
-            await sleep(1000);
+        let idleTicks = 0;
+        while (Date.now() - mineStart < 45_000 && b.running) {
+            await sleep(1200);
             const ns = b.sdk.getState();
-            if (!ns) break;
-            if (ns.inventory.length >= 28) break;
-
+            if (!ns || ns.inventory.length >= 28) break;
             const cur = ns.inventory.filter(i => isOre(i.name)).length;
-            if (cur > lastOreCount) {
-                lastOreCount = cur;
-                idleTicks = 0;
-                updateProgress(b);
-                continue;
-            }
-
-            // animId 625 = mining swing; -1 = fully idle
-            const isMining = ns.player.animId === 625;
-            const isIdle   = ns.player.animId === -1;
-
-            if (isIdle) {
+            if (cur > lastOreCount) { lastOreCount = cur; idleTicks = 0; updateProgress(b); continue; }
+            // animId 625 = mining, -1 = idle; only count idle ticks when not actively mining
+            const anim = ns.player.animId;
+            if (anim === 625) { idleTicks = 0; continue; }
+            if (anim === -1) {
                 idleTicks++;
                 if (idleTicks >= 2) {
-                    // Rock depleted or we never got ore — skip it
-                    if (cur === oreCount) {
-                        skipRocks.set(`${target.x},${target.z}`, Date.now() + 20_000);
-                        addLog(b, `Rock (${target.x},${target.z}) depleted — skipping 20s`);
-                    }
+                    if (cur === oreCount) skipRocks.set(`${target.x},${target.z}`, Date.now() + 20_000);
                     break;
                 }
-            } else if (isMining) {
-                idleTicks = 0; // still swinging
-            }
+            } else { idleTicks = 0; }
         }
     }
 
@@ -1767,7 +1796,7 @@ async function miningVarrockWestLoop(b: BotState) {
 
         const isOre = (name: string) => /(ore$|^coal$|^tin$|^copper$)/i.test(name);
         const oreCount = state.inventory.filter(i => isOre(i.name)).length;
-        const invFull  = state.inventory.length >= 28 && oreCount > 0;
+        const invFull  = state.inventory.length >= 28;
 
         // ── BANK ─────────────────────────────────────────────────────────────
         if (invFull || oreCount >= 24) {
@@ -1788,10 +1817,12 @@ async function miningVarrockWestLoop(b: BotState) {
                 addLog(b, `Bank failed — heading back to mine`);
                 await sleep(2000);
             } else {
-                await b.bot.depositItem(/ore/i, -1);
-                await b.bot.depositItem(/^coal$/i, -1);
-                await b.bot.depositItem(/^tin$/i, -1);
-                await b.bot.depositItem(/^copper$/i, -1);
+                // Deposit all ore/resources — exact name match per slot so nothing is left behind
+                const keepGear2 = /pickaxe|axe|helm|shield|sword|armor|armour|gloves|boots|legs|body|cape|amulet|ring/i;
+                const mineInv2 = b.sdk.getState()?.inventory ?? [];
+                for (const name of [...new Set(mineInv2.filter(i => !keepGear2.test(i.name)).map(i => i.name))]) {
+                    await b.bot.depositItem(new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), -1);
+                }
                 await b.bot.closeBank();
                 b.bankTrips++;
                 updateProgress(b);
@@ -1808,7 +1839,18 @@ async function miningVarrockWestLoop(b: BotState) {
         const dist = Math.hypot(px - VARROCK_WEST_MINE.x, pz - VARROCK_WEST_MINE.z);
         if (dist > MAX_DRIFT) {
             setStatus(b, 'Walking to Varrock West mine...');
+            // Open any gate blocking the path before walking
+            const gate = b.sdk.getState()?.nearbyLocs.find(l => /gate/i.test(l.name) && l.distance <= 3);
+            if (gate) { try { await b.bot.openDoor(gate); } catch { /* keep going */ } }
             try { await b.bot.walkTo(VARROCK_WEST_MINE.x, VARROCK_WEST_MINE.z); } catch { /* keep going */ }
+            // Verify arrival — if still far away, try opening gate and walking again
+            const after = b.sdk.getState()?.player;
+            if (after && Math.hypot(after.worldX - VARROCK_WEST_MINE.x, after.worldZ - VARROCK_WEST_MINE.z) > MAX_DRIFT) {
+                addLog(b, 'Walk to west mine failed — trying to open gate and retry');
+                const blockedGate = b.sdk.getState()?.nearbyLocs.find(l => /gate/i.test(l.name) && l.distance <= 5);
+                if (blockedGate) { try { await b.bot.openDoor(blockedGate); } catch { /* keep going */ } }
+                try { await b.bot.walkTo(VARROCK_WEST_MINE.x, VARROCK_WEST_MINE.z); } catch { /* keep going */ }
+            }
             continue;
         }
 
@@ -1854,7 +1896,10 @@ async function miningVarrockWestLoop(b: BotState) {
             if (!ns || ns.inventory.length >= 28) break;
             const cur = ns.inventory.filter(i => isOre(i.name)).length;
             if (cur > lastOreCount) { lastOreCount = cur; idleTicks = 0; updateProgress(b); continue; }
-            if (ns.player.animId === -1) {
+            // animId 625 = mining, -1 = idle; only count idle ticks when not actively mining
+            const anim = ns.player.animId;
+            if (anim === 625) { idleTicks = 0; continue; }
+            if (anim === -1) {
                 idleTicks++;
                 if (idleTicks >= 2) {
                     if (cur === oreCount) skipRocks.set(`${target.x},${target.z}`, Date.now() + 20_000);
@@ -1899,38 +1944,68 @@ async function miningEssenceLoop(b: BotState) {
                     const firstOpt = portal.optionsWithIndex[0];
                     if (firstOpt) {
                         await b.sdk.sendInteractLoc(portal.x, portal.z, portal.id, firstOpt.opIndex);
-                        await sleep(4000);
+                        // Wait until we actually leave the mine (up to 8s), not just a fixed sleep
+                        const exitStart = Date.now();
+                        while (Date.now() - exitStart < 8000 && b.running) {
+                            await sleep(300);
+                            const ns = b.sdk.getState();
+                            if (!ns || !isInEssenceMine(ns.player.worldZ)) break;
+                        }
                     }
                 } else {
-                    addLog(b, 'No portal visible — scanning wider area...');
-                    await sleep(2000);
+                    // No portal visible — walk toward known portal area then retry
+                    addLog(b, 'No portal visible — walking to portal area...');
+                    try { await b.bot.walkTo(2983, 4849, 5); } catch { /* keep going */ }
+                    await sleep(1000);
                 }
                 continue;
             }
 
-            // Walk to Varrock East bank (near Aubury)
-            try { await b.bot.walkTo(VARROCK_EAST_BANK.x, VARROCK_EAST_BANK.z); } catch { /* keep going */ }
-            if (!b.running) break;
+            // Navigate to Varrock East bank — go east past wall then north (wall blocks direct north at z~3407)
+            setStatus(b, 'Walking to Varrock East bank...');
+            const bankNavSteps: Array<[number, number]> = [[3259, 3408], [3259, 3421], [VARROCK_EAST_BANK.x, VARROCK_EAST_BANK.z]];
+            let navFailed = false;
+            for (const [wx, wz] of bankNavSteps) {
+                if (!b.running) break;
+                try { await b.sdk.sendWalk(wx, wz, true); } catch { navFailed = true; break; }
+                // Wait for arrival (position-based, up to 6s) instead of fixed sleep
+                const navStart = Date.now();
+                while (Date.now() - navStart < 6000 && b.running) {
+                    await sleep(300);
+                    const ns = b.sdk.getState();
+                    if (!ns) continue;
+                    if (Math.hypot(ns.player.worldX - wx, ns.player.worldZ - wz) <= 4) break;
+                }
+            }
+            if (navFailed || !b.running) { await sleep(1000); continue; }
 
             let opened = { success: false, message: '' };
             for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(800);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3 failed: ${opened.message} — retrying...`);
-                await sleep(1200);
+                try {
+                    opened = await b.bot.openBank();
+                    if (opened.success) break;
+                    addLog(b, `Bank attempt ${attempt}/3: ${opened.message}`);
+                    await sleep(1000);
+                } catch (e: any) {
+                    addLog(b, `Bank error attempt ${attempt}/3: ${e?.message ?? e}`);
+                    await sleep(1500);
+                }
             }
-
             if (!opened.success) {
-                addLog(b, `Bank failed — retrying next cycle`);
+                addLog(b, `Bank failed after 3 attempts — retrying next cycle`);
                 await sleep(2000);
-            } else {
+                continue;
+            }
+            try {
                 await b.bot.depositItem(/rune essence/i, -1);
                 await b.bot.closeBank();
-                b.bankTrips++;
-                updateProgress(b);
-                setStatus(b, `Banked (trip #${b.bankTrips}) — heading to Aubury...`);
+            } catch (e: any) {
+                addLog(b, `Deposit/close error: ${e?.message ?? e}`);
+                try { await b.bot.closeBank(); } catch { /* ignore */ }
             }
+            b.bankTrips++;
+            updateProgress(b);
+            setStatus(b, `Banked (trip #${b.bankTrips}) — heading to Aubury...`);
             continue;
         }
 
@@ -1954,7 +2029,8 @@ async function miningEssenceLoop(b: BotState) {
             if (mineOpt) {
                 await b.sdk.sendInteractLoc(target.x, target.z, target.id, mineOpt.opIndex);
             } else {
-                const result = await b.bot.interactLoc(target, 'mine');
+                let result = { success: false, message: '' };
+                try { result = await b.bot.interactLoc(target, 'mine'); } catch (e: any) { result = { success: false, message: e?.message ?? String(e) }; }
                 if (!result.success) {
                     addLog(b, `Mine failed: ${result.message}`);
                     await sleep(1000);
@@ -2241,7 +2317,7 @@ async function mosGiantLoop(b: BotState) {
             for (let i = 0; i < 18 && b.running; i++) {
                 await sleep(10_000);
                 const healed = b.sdk.getState();
-                if (healed && healed.player.hp >= healed.player.maxHp) break;
+                if (healed && healed.player.hp >= Math.min(10, maxHp)) break;
             }
             updateProgress(b);
             continue;
@@ -2464,357 +2540,6 @@ async function runiteLoop(b: BotState) {
 }
 
 // ─── Free Will loop ───────────────────────────────────────────────────────────
-// ─── Fletching constants ───────────────────────────────────────────────────────
-const KNIFE_SPAWN           = { x: 3224, z: 3202 }; // SE of Lumbridge castle
-const LUMBRIDGE_TREES       = { x: 3200, z: 3230 }; // Trees near Lumbridge for logs
-
-// ─── Runecrafting constants ────────────────────────────────────────────────────
-const AIR_ALTAR_RUINS       = { x: 2983, z: 3292 }; // Air altar ruins entrance (NW of Draynor)
-const AIR_ALTAR_CRAFT_TILE  = { x: 2844, z: 4834 }; // Inside air altar (approx)
-const isInAirAltar          = (z: number) => z >= 4800 && z <= 4900;
-
-// ─── Fletching loop ───────────────────────────────────────────────────────────
-// Pure bank-based: sit at Draynor bank, withdraw willow logs + knife,
-// fletch every log one click at a time, deposit bows, repeat indefinitely.
-async function fletchingLoop(b: BotState) {
-    setStatus(b, 'Starting willow bow fletcher (bank-based)...');
-
-    // Helper: open Draynor bank with up to N retries
-    async function openDraynorBank(): Promise<boolean> {
-        try { await b.bot.walkTo(DRAYNOR_BANK.x, DRAYNOR_BANK.z, 1); } catch { /* ok */ }
-        await sleep(600);
-        for (let attempt = 1; attempt <= 4 && b.running; attempt++) {
-            const r = await b.bot.openBank();
-            if (r.success) return true;
-            addLog(b, `Bank attempt ${attempt}/4: ${r.message}`);
-            await sleep(800);
-        }
-        return false;
-    }
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const inv       = state.inventory;
-        const hasKnife  = inv.some(i => /knife/i.test(i.name));
-        const logCount  = inv.filter(i => /^willow logs$/i.test(i.name)).length;
-        const bowCount  = inv.filter(i => /shortbow|longbow/i.test(i.name)).length;
-        const fletchLvl = state.skills.find(s => s.name === 'Fletching')?.baseLevel ?? 1;
-
-        // ── DEPOSIT bows when any are ready ──────────────────────────────────
-        if (bowCount > 0 && logCount === 0) {
-            setStatus(b, `Depositing ${bowCount} bows...`);
-            if (!await openDraynorBank()) { await sleep(2000); continue; }
-            await b.bot.depositItem(/shortbow|longbow/i, -1);
-            await b.bot.closeBank();
-            b.bankTrips++;
-            updateProgress(b);
-            setStatus(b, `Banked bows (trip #${b.bankTrips}) — withdrawing more logs...`);
-            continue;
-        }
-
-        // ── WITHDRAW logs (and knife if needed) from bank ─────────────────────
-        if (logCount === 0) {
-            setStatus(b, 'Withdrawing willow logs from bank...');
-            if (!await openDraynorBank()) { await sleep(2000); continue; }
-
-            // Deposit any stray bows first
-            if ((b.sdk.getState()?.inventory ?? []).some(i => /shortbow|longbow/i.test(i.name))) {
-                await b.bot.depositItem(/shortbow|longbow/i, -1);
-            }
-
-            // Withdraw knife if not in inventory
-            if (!(b.sdk.getState()?.inventory ?? []).some(i => /knife/i.test(i.name))) {
-                const knifeResult = await b.bot.withdrawItem(/knife/i, 1);
-                if (!knifeResult.success) {
-                    addLog(b, 'No knife in bank — fetching from Lumbridge spawn...');
-                    await b.bot.closeBank();
-                    try { await b.bot.walkTo(KNIFE_SPAWN.x, KNIFE_SPAWN.z); } catch { /* ok */ }
-                    for (let attempt = 0; attempt < 8 && b.running; attempt++) {
-                        const knifeItem = b.sdk.findGroundItem(/knife/i);
-                        if (knifeItem) {
-                            const r = await b.bot.pickupItem(knifeItem);
-                            if (r.success) { addLog(b, 'Got knife!'); break; }
-                        }
-                        await sleep(2000);
-                    }
-                    continue;
-                }
-            }
-
-            // Withdraw up to 26 willow logs (1 slot = knife, 1 slot = buffer)
-            const withdrawn = await b.bot.withdrawItem(/^willow logs$/i, 26);
-            await b.bot.closeBank();
-            if (!withdrawn.success) {
-                addLog(b, `No willow logs in bank: ${withdrawn.message} — waiting 10s`);
-                await sleep(10_000);
-            }
-            continue;
-        }
-
-        // ── FLETCH — one knife-on-log click per iteration ─────────────────────
-        const product = fletchLvl >= 10 ? 'longbow' : fletchLvl >= 5 ? 'shortbow' : 'arrow shafts';
-        let failures = 0;
-        while (b.running && failures < 3) {
-            const remaining = (b.sdk.getState()?.inventory ?? []).filter(i => /^willow logs$/i.test(i.name)).length;
-            if (remaining === 0) break;
-            setStatus(b, `Fletching willow log → ${product} (${remaining} left)...`);
-            const result = await b.bot.fletchLogs(product);
-            if (result.success) {
-                failures = 0;
-                updateProgress(b);
-                await sleep(600);
-            } else {
-                failures++;
-                addLog(b, `Fletch failed (${failures}/3): ${result.message}`);
-                await sleep(800);
-            }
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
-// ─── Fletching (Yew) loop ─────────────────────────────────────────────────────
-// Pure bank-based: sit at Edgeville bank, withdraw yew logs + knife,
-// fletch every log one click at a time, deposit bows, repeat.
-// Level 65+: yew shortbow. Level 70+: yew longbow.
-async function fletchingYewLoop(b: BotState) {
-    setStatus(b, 'Starting yew bow fletcher (bank-based)...');
-
-    async function openEdgevilleBank(): Promise<boolean> {
-        try { await b.bot.walkTo(EDGEVILLE_BANK.x, EDGEVILLE_BANK.z, 1); } catch { /* ok */ }
-        await sleep(600);
-        for (let attempt = 1; attempt <= 4 && b.running; attempt++) {
-            const r = await b.bot.openBank();
-            if (r.success) return true;
-            addLog(b, `Bank attempt ${attempt}/4: ${r.message}`);
-            await sleep(800);
-        }
-        return false;
-    }
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const inv         = state.inventory;
-        const yewLogCount = inv.filter(i => /^yew logs$/i.test(i.name)).length;
-        const bowCount    = inv.filter(i => /yew.*bow/i.test(i.name)).length;
-        const fletchLvl   = state.skills.find(s => s.name === 'Fletching')?.baseLevel ?? 1;
-
-        // ── DEPOSIT bows when logs are exhausted ─────────────────────────────
-        if (bowCount > 0 && yewLogCount === 0) {
-            setStatus(b, `Depositing ${bowCount} yew bows...`);
-            if (!await openEdgevilleBank()) { await sleep(2000); continue; }
-            await b.bot.depositItem(/yew.*bow/i, -1);
-            await b.bot.closeBank();
-            b.bankTrips++;
-            updateProgress(b);
-            setStatus(b, `Banked yew bows (trip #${b.bankTrips}) — withdrawing more logs...`);
-            continue;
-        }
-
-        // ── WITHDRAW logs (and knife if needed) ──────────────────────────────
-        if (yewLogCount === 0) {
-            setStatus(b, 'Withdrawing yew logs from Edgeville bank...');
-            if (!await openEdgevilleBank()) { await sleep(2000); continue; }
-
-            // Deposit any stray bows
-            if ((b.sdk.getState()?.inventory ?? []).some(i => /yew.*bow/i.test(i.name))) {
-                await b.bot.depositItem(/yew.*bow/i, -1);
-            }
-
-            // Withdraw knife if missing
-            if (!(b.sdk.getState()?.inventory ?? []).some(i => /knife/i.test(i.name))) {
-                const knifeResult = await b.bot.withdrawItem(/knife/i, 1);
-                if (!knifeResult.success) {
-                    addLog(b, 'No knife in bank — fetching from Lumbridge spawn...');
-                    await b.bot.closeBank();
-                    try { await b.bot.walkTo(KNIFE_SPAWN.x, KNIFE_SPAWN.z); } catch { /* ok */ }
-                    for (let attempt = 0; attempt < 8 && b.running; attempt++) {
-                        const knifeItem = b.sdk.findGroundItem(/knife/i);
-                        if (knifeItem) {
-                            const r = await b.bot.pickupItem(knifeItem);
-                            if (r.success) { addLog(b, 'Got knife!'); break; }
-                        }
-                        await sleep(2000);
-                    }
-                    continue;
-                }
-            }
-
-            // Withdraw up to 26 yew logs
-            const withdrawn = await b.bot.withdrawItem(/^yew logs$/i, 26);
-            await b.bot.closeBank();
-            if (!withdrawn.success) {
-                addLog(b, `No yew logs in bank: ${withdrawn.message} — waiting 15s`);
-                await sleep(15_000);
-            }
-            continue;
-        }
-
-        // ── FLETCH — one knife-on-log click per iteration ─────────────────────
-        const product = fletchLvl >= 70 ? 'yew longbow' : 'yew shortbow';
-        let failures = 0;
-        while (b.running && failures < 3) {
-            const remaining = (b.sdk.getState()?.inventory ?? []).filter(i => /^yew logs$/i.test(i.name)).length;
-            if (remaining === 0) break;
-            setStatus(b, `Fletching yew log → ${product} (${remaining} left)...`);
-            const result = await b.bot.fletchLogs(product);
-            if (result.success) {
-                failures = 0;
-                updateProgress(b);
-                await sleep(600);
-            } else {
-                failures++;
-                addLog(b, `Fletch failed (${failures}/3): ${result.message}`);
-                await sleep(800);
-            }
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
-// ─── Runecrafting (Air) loop ──────────────────────────────────────────────────
-// Varrock East bank → withdraw 28 essence → walk to air altar → craft → bank.
-async function runecraftingAirLoop(b: BotState) {
-    setStatus(b, 'Starting air runecrafting bot...');
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const inv       = state.inventory;
-        const essCount  = inv.filter(i => /rune essence/i.test(i.name)).length;
-        const runeCount = inv.filter(i => /^air rune$/i.test(i.name)).reduce((s, i) => s + i.count, 0);
-        const inAltar   = isInAirAltar(state.player.worldZ);
-        const invFull   = inv.length >= 28;
-
-        // ── BANK when we have runes (completed craft run) or full inv ─────────
-        if (runeCount > 0 || (invFull && essCount === 0)) {
-            setStatus(b, `Banking ${runeCount} air runes...`);
-            // Exit altar if we're still inside
-            if (inAltar) {
-                const exit = state.nearbyLocs.find(l => /exit|portal|leave/i.test(l.name));
-                if (exit) {
-                    const opt = exit.optionsWithIndex[0];
-                    if (opt) {
-                        await b.sdk.sendInteractLoc(exit.x, exit.z, exit.id, opt.opIndex);
-                        await sleep(3000);
-                    }
-                } else {
-                    await sleep(2000);
-                }
-                continue;
-            }
-
-            try { await b.bot.walkTo(VARROCK_EAST_BANK.x, VARROCK_EAST_BANK.z); } catch { await sleep(2000); continue; }
-            if (!b.running) break;
-
-            let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(600);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3: ${opened.message}`);
-                await sleep(1200);
-            }
-            if (!opened.success) {
-                addLog(b, 'Bank failed — retrying next cycle');
-                await sleep(2000);
-            } else {
-                await b.bot.depositItem(/air rune/i, -1);
-                await b.bot.closeBank();
-                b.bankTrips++;
-                updateProgress(b);
-                setStatus(b, `Banked air runes (trip #${b.bankTrips})`);
-            }
-            continue;
-        }
-
-        // ── WITHDRAW essence if inventory is empty ────────────────────────────
-        if (essCount === 0 && !inAltar) {
-            setStatus(b, 'Withdrawing rune essence...');
-            try { await b.bot.walkTo(VARROCK_EAST_BANK.x, VARROCK_EAST_BANK.z); } catch { await sleep(2000); continue; }
-            if (!b.running) break;
-
-            let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(600);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3: ${opened.message}`);
-                await sleep(1200);
-            }
-            if (!opened.success) {
-                addLog(b, 'Bank failed — retrying');
-                await sleep(2000);
-                continue;
-            }
-            const withdrawn = await b.bot.withdrawItem(/rune essence/i, 28);
-            await b.bot.closeBank();
-            if (!withdrawn.success) {
-                addLog(b, `No essence in bank: ${withdrawn.message} — waiting 10s`);
-                await sleep(10_000);
-            }
-            continue;
-        }
-
-        // ── CRAFT at air altar ────────────────────────────────────────────────
-        if (essCount > 0) {
-            if (!inAltar) {
-                setStatus(b, `Walking to air altar ruins (${essCount} essence)...`);
-                try { await b.bot.walkTo(AIR_ALTAR_RUINS.x, AIR_ALTAR_RUINS.z); } catch { await sleep(3000); continue; }
-                if (!b.running) break;
-                // Enter the mysterious ruins
-                const ruins = b.sdk.findNearbyLoc(/mysterious ruins|altar ruins/i) as NearbyLoc | undefined;
-                if (ruins) {
-                    addLog(b, 'Entering air altar ruins...');
-                    const opt = ruins.optionsWithIndex.find(o => /enter|use/i.test(o.text)) ?? ruins.optionsWithIndex[0];
-                    if (opt) {
-                        await b.sdk.sendInteractLoc(ruins.x, ruins.z, ruins.id, opt.opIndex);
-                        await sleep(3000);
-                    }
-                } else {
-                    addLog(b, 'Altar ruins not visible — waiting...');
-                    await sleep(2000);
-                }
-                continue;
-            }
-
-            // Inside altar — craft runes
-            setStatus(b, `Crafting air runes (${essCount} essence)...`);
-            const altar = b.sdk.findNearbyLoc(/^altar$/i) as NearbyLoc | undefined;
-            if (altar) {
-                const opt = altar.optionsWithIndex.find(o => /use|craft/i.test(o.text)) ?? altar.optionsWithIndex[0];
-                if (opt) {
-                    await b.sdk.sendInteractLoc(altar.x, altar.z, altar.id, opt.opIndex);
-                    await sleep(3000); // wait for crafting animation
-                    updateProgress(b);
-                    setStatus(b, 'Crafted air runes — heading back to bank...');
-                }
-            } else {
-                addLog(b, 'No altar found inside — scanning...');
-                await sleep(2000);
-            }
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
 // AI decides what to do: equip gear, eat food, bank, fight/mine/woodcut
 
 async function freeWillLoop(b: BotState) {
@@ -2830,6 +2555,7 @@ async function freeWillLoop(b: BotState) {
     let biasCycle = 0;
 
     while (b.running) {
+        if (await checkAndRunCmd(b)) continue;
         await sleep(600);
         const state = b.sdk.getState();
         if (!state) { await sleep(2000); continue; }
@@ -2948,207 +2674,18 @@ async function freeWillLoop(b: BotState) {
     addLog(b, 'Bot stopped.');
 }
 
-// ─── Flax Picking loop ────────────────────────────────────────────────────────
-// Seers' Village flax field → Seers' bank → repeat
-
-const FLAX_FIELD_POS   = { x: 2744, z: 3441 };
-const SEERS_BANK_POS   = { x: 2724, z: 3492 };
-const SPIN_WHEEL_POS   = { x: 2718, z: 3472 };
-
-async function flaxPickLoop(b: BotState) {
-    setStatus(b, 'Starting flax picker...');
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const flaxInInv = state.inventory.filter(i => /^flax$/i.test(i.name))
-            .reduce((s, i) => s + i.count, 0);
-        const invFull = state.inventory.length >= 28;
-
-        // ── Bank when full ────────────────────────────────────────────────
-        if (invFull && flaxInInv > 0) {
-            setStatus(b, `Full (${flaxInInv} flax) — banking...`);
-            try { await b.bot.walkTo(SEERS_BANK_POS.x, SEERS_BANK_POS.z); } catch { /* keep going */ }
-            if (!b.running) break;
-
-            let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(600);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3 failed: ${opened.message}`);
-                await sleep(1200);
-            }
-            if (opened.success) {
-                await b.bot.depositItem(/^flax$/i, -1);
-                await b.bot.closeBank();
-                b.bankTrips++;
-                updateProgress(b);
-                setStatus(b, `Banked (trip #${b.bankTrips})`);
-            }
-            continue;
-        }
-
-        // ── Walk to flax field and pick ───────────────────────────────────
-        const pos = state.player;
-        const atField = Math.abs(pos.worldX - FLAX_FIELD_POS.x) < 12 && Math.abs(pos.worldZ - FLAX_FIELD_POS.z) < 12;
-        if (!atField) {
-            setStatus(b, 'Walking to flax field...');
-            try { await b.bot.walkTo(FLAX_FIELD_POS.x, FLAX_FIELD_POS.z); } catch { /* keep going */ }
-            continue;
-        }
-
-        // Find and pick flax
-        let flax = b.sdk.findNearbyLoc(/^flax$/i);
-        if (!flax) {
-            const wider = await b.sdk.scanNearbyLocs(10);
-            flax = wider?.find(l => /^flax$/i.test(l.name)) ?? null;
-        }
-        if (!flax) {
-            setStatus(b, 'No flax nearby — waiting...');
-            await sleep(1200);
-            continue;
-        }
-
-        setStatus(b, `Picking flax (${flaxInInv}/28)...`);
-        const r = await b.bot.interactLoc(flax, 'pick');
-        if (!r.success) {
-            addLog(b, `Pick failed: ${r.message}`);
-            await sleep(600);
-        } else {
-            await sleep(800);
-            updateProgress(b);
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
-// ─── Flax Spinning loop ───────────────────────────────────────────────────────
-// Seers' bank → withdraw flax → spinning wheel → deposit bow strings → repeat
-
-async function flaxSpinLoop(b: BotState) {
-    setStatus(b, 'Starting flax spinner...');
-
-    while (b.running) {
-        if (await checkAndRunCmd(b)) continue;
-        const state = b.sdk.getState();
-        if (!state) { await sleep(1000); continue; }
-        if (state.dialog?.isOpen) { await b.bot.dismissBlockingUI(); continue; }
-
-        const flaxInInv   = state.inventory.filter(i => /^flax$/i.test(i.name));
-        const stringsInInv = state.inventory.filter(i => /bow.?string/i.test(i.name));
-        const flaxCount   = flaxInInv.reduce((s, i) => s + i.count, 0);
-
-        // ── Deposit strings / withdraw flax ──────────────────────────────
-        if (flaxCount === 0) {
-            setStatus(b, 'No flax — banking...');
-            try { await b.bot.walkTo(SEERS_BANK_POS.x, SEERS_BANK_POS.z); } catch { /* keep going */ }
-            if (!b.running) break;
-
-            let opened = { success: false, message: '' };
-            for (let attempt = 1; attempt <= 3 && b.running; attempt++) {
-                await sleep(600);
-                opened = await b.bot.openBank();
-                if (opened.success) break;
-                addLog(b, `Bank attempt ${attempt}/3 failed: ${opened.message}`);
-                await sleep(1200);
-            }
-            if (!opened.success) { await sleep(2000); continue; }
-
-            // Deposit bow strings
-            if (stringsInInv.length > 0) {
-                await b.bot.depositItem(/bow.?string/i, -1);
-                b.bankTrips++;
-                updateProgress(b);
-            }
-
-            // Check for flax in bank
-            const bankState = b.sdk.getState();
-            const bankFlax  = bankState?.bank?.find(i => /^flax$/i.test(i.name));
-            if (!bankFlax || bankFlax.count === 0) {
-                addLog(b, 'No flax in bank — stopping. Run flax_pick first.');
-                await b.bot.closeBank();
-                b.running = false;
-                break;
-            }
-
-            await b.bot.withdrawItem(bankFlax.slot, Math.min(28, bankFlax.count));
-            await b.bot.closeBank();
-            addLog(b, `Withdrew flax (bank had ${bankFlax.count})`);
-            continue;
-        }
-
-        // ── Walk to spinning wheel and spin ───────────────────────────────
-        const pos = state.player;
-        const atWheel = Math.abs(pos.worldX - SPIN_WHEEL_POS.x) < 8 && Math.abs(pos.worldZ - SPIN_WHEEL_POS.z) < 8;
-        if (!atWheel) {
-            setStatus(b, 'Walking to spinning wheel...');
-            try { await b.bot.walkTo(SPIN_WHEEL_POS.x, SPIN_WHEEL_POS.z); } catch { /* keep going */ }
-            continue;
-        }
-
-        let wheel = b.sdk.findNearbyLoc(/spinning.?wheel/i);
-        if (!wheel) {
-            const wider = await b.sdk.scanNearbyLocs(8);
-            wheel = wider?.find(l => /spinning.?wheel/i.test(l.name)) ?? null;
-        }
-        if (!wheel) {
-            addLog(b, 'Spinning wheel not found — check coords');
-            await sleep(2000);
-            continue;
-        }
-
-        const currentInv = b.sdk.getState()?.inventory ?? [];
-        const flaxItem   = currentInv.find(i => /^flax$/i.test(i.name));
-        if (!flaxItem) continue;
-
-        setStatus(b, `Spinning flax (${flaxCount} left)...`);
-        const r = await b.bot.useItemOnLoc(flaxItem, wheel);
-        if (!r.success) {
-            addLog(b, `Spin failed: ${r.message}`);
-            await sleep(800);
-        } else {
-            await sleep(1800); // ~3 ticks
-            updateProgress(b);
-        }
-    }
-
-    setStatus(b, 'idle');
-    addLog(b, 'Bot stopped.');
-}
-
 // ─── Connect all bots ─────────────────────────────────────────────────────────
 
-const rawArgs = process.argv.slice(2);
-
-let botArgs: string[];
-if (rawArgs[0] === '--all' || rawArgs[0] === '-a') {
-    const defaultJob = rawArgs[1] ?? 'wc';
-    const botsDir = join(import.meta.dir, 'bots');
-    const botNames = readdirSync(botsDir).filter(
-        d => d !== '_template' && existsSync(join(botsDir, d, 'bot.env'))
-    );
-    botArgs = botNames.map(name => `${name}:${defaultJob}`);
-    console.log(`[Dashboard] --all: found ${botArgs.length} bots`);
-} else {
-    botArgs = rawArgs;
-}
-
+const botArgs = process.argv.slice(2);
 if (botArgs.length === 0) {
     console.error('Usage: bun dashboard.ts <bot1:job> [bot2:job] ...');
-    console.error('       bun dashboard.ts --all [job=wc]');
-    console.error('Jobs: wc, yews, mining_all, mining_coal, combat_cows, fishing_draynor, ...');
+    console.error('Jobs: wc (willow woodcutting), mining');
     process.exit(1);
 }
 
 for (const arg of botArgs) {
     const [name, jobRaw = 'wc'] = arg.split(':');
-    const validJobs: Job[] = ['wc', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_barb_coal', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'fletching', 'fletching_yew', 'runecrafting_air', 'flax_pick', 'flax_spin', 'free_will'];
+    const validJobs: Job[] = ['wc', 'wc_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
     // Legacy aliases
     const jobAliases: Record<string, Job> = { mining: 'mining_all', combat: 'combat_cows' };
     const job = (validJobs.includes(jobRaw as Job) ? jobRaw : jobAliases[jobRaw] ?? 'wc') as Job;
@@ -3172,7 +2709,15 @@ for (const arg of botArgs) {
     });
     const bot = new BotActions(sdk);
 
-    const b: BotState = { name, job, sdk, bot, running: false, status: 'connecting...', logs: [], bankTrips: 0, mineOrigin: null, xpHistory: new Map(), lastProgress: Date.now(), restartCount: 0, pendingCmd: null };
+    // Build the /bot client URL once so the /start handler can open it in the background
+    const serverHost = env.SERVER || 'rs-sdk-demo.fly.dev';
+    const isLocal = serverHost === 'localhost' || serverHost.startsWith('localhost:');
+    const clientBase = isLocal
+        ? `http://${serverHost}/bot`
+        : `https://${serverHost}/bot`;
+    const clientUrl = `${clientBase}?bot=${encodeURIComponent(env.BOT_USERNAME)}&password=${encodeURIComponent(env.PASSWORD)}`;
+
+    const b: BotState = { name, job, sdk, bot, running: false, status: 'connecting...', logs: [], bankTrips: 0, mineOrigin: null, xpHistory: new Map(), lastProgress: Date.now(), restartCount: 0, pendingCmd: null, clientUrl };
     bots.set(name, b);
 
     sdk.connect().then(() => {
@@ -3226,6 +2771,16 @@ Bun.serve({
                 b.running = true;
                 b.restartCount = 0;
                 b.mineOrigin = null; // reset origin so it re-detects position
+                // Open the bot's game tab in Chrome
+                const { exec } = await import('child_process');
+                if (process.platform === 'win32') {
+                    exec(`start chrome "${b.clientUrl}"`, (err) => {
+                        if (err) exec(`start "" "${b.clientUrl}"`, () => {});
+                    });
+                } else {
+                    exec(`open -g "${b.clientUrl}"`, () => {});
+                }
+                console.log(`[${name}] Opened game tab`);
                 startBotLoop(b);
             }
             return Response.json({ ok: true });
@@ -3249,7 +2804,7 @@ Bun.serve({
         if (req.method === 'POST' && url.pathname === '/setjob') {
             const { name, job } = await req.json() as { name: string; job: Job };
             const b = bots.get(name);
-            const validJobs: Job[] = ['wc', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_barb_coal', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'fletching', 'fletching_yew', 'runecrafting_air', 'flax_pick', 'flax_spin', 'free_will'];
+            const validJobs: Job[] = ['wc', 'wc_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
             if (b && validJobs.includes(job)) {
                 const wasRunning = b.running;
                 b.job = job;
@@ -3289,6 +2844,30 @@ Bun.serve({
 
 console.log(`[Dashboard] Running at http://localhost:${DASHBOARD_PORT}`);
 console.log(`[Dashboard] Bots: ${botArgs.join(', ')}`);
+
+// Auto-open all bot game tabs on startup (staggered so the server isn't slammed)
+(async () => {
+    const { exec } = await import('child_process');
+    // Brief delay so the HTTP server is ready first
+    await new Promise(r => setTimeout(r, 1000));
+    // Open dashboard itself
+    const openUrl = (url: string) => {
+        if (process.platform === 'win32') exec(`start chrome "${url}"`, (err) => {
+            if (err) exec(`start "" "${url}"`, () => {});
+        });
+        else exec(`open "${url}"`, () => {});
+    };
+    openUrl(`http://localhost:${DASHBOARD_PORT}`);
+    // Open each bot's game tab, staggered 800ms apart
+    let i = 0;
+    for (const b of bots.values()) {
+        await new Promise(r => setTimeout(r, 800 * i));
+        openUrl(b.clientUrl);
+        const err_check = () => console.log(`[${b.name}] Auto-opened game tab`);
+        err_check();
+        i++;
+    }
+})();
 
 // ─── HTML ─────────────────────────────────────────────────────────────────────
 
@@ -3513,12 +3092,12 @@ header h1 { color: var(--gold); font-size: 0.9em; letter-spacing: 1px; white-spa
 <script>
 const JOBS = [
   { value: 'wc',                  label: '🪓 Willows (Draynor)' },
+  { value: 'wc_lumbridge',        label: '🪓 Willows (Lumbridge)' },
   { value: 'yews',                label: '🌲 Yews (Edgeville)' },
   { value: 'yews_varrock',        label: '🌲 Yews (Varrock Castle)' },
   { value: 'mining_all',          label: '⛏ Mining – Guild (All)' },
   { value: 'mining_coal',         label: '⛏ Mining – Guild (Coal)' },
   { value: 'mining_mithril',      label: '⛏ Mining – Guild (Mithril)' },
-  { value: 'mining_barb_coal',    label: '⛏ Mining – Barbarian Village (coal)' },
   { value: 'mining_varrock_east', label: '⛏ Mining – Varrock East' },
   { value: 'mining_varrock_west', label: '⛏ Mining – Varrock West' },
   { value: 'mining_essence',      label: '⛏ Mining – Rune Essence' },
@@ -3530,11 +3109,6 @@ const JOBS = [
   { value: 'fishing_barb',        label: '🎣 Fishing – Barb Village (fly)' },
   { value: 'combat_moss_giants',  label: '💀 Combat – Moss Giants (Sewers)' },
   { value: 'mining_runite',       label: '💎 Mining – Runite (Wilderness)' },
-  { value: 'fletching',           label: '🏹 Fletching – Willow bows (Draynor)' },
-  { value: 'fletching_yew',      label: '🏹 Fletching – Yew bows (Edgeville)' },
-  { value: 'runecrafting_air',    label: '🔮 Runecrafting – Air runes' },
-  { value: 'flax_pick',           label: '🌾 Crafting – Flax picking (Seers)' },
-  { value: 'flax_spin',           label: '🧵 Crafting – Flax spinning (Seers)' },
   { value: 'free_will',           label: '🧠 Free Will – AI decides' },
 ];
 const JOB_OPTIONS_HTML = JOBS.map(j =>
@@ -3613,6 +3187,8 @@ function renderBot(data) {
         <div class="cmd-row" id="cmds-\${data.name}">
           <button class="cmd-btn" onclick="sendCmd('\${data.name}','bank')" title="Walk to nearest bank">🏦</button>
           <button class="cmd-btn" onclick="sendCmd('\${data.name}','lumbridge')" title="Walk to Lumbridge">🏰</button>
+          <button class="cmd-btn" onclick="sendCmd('\${data.name}','falador')" title="Walk to Falador">🛡️</button>
+          <button class="cmd-btn" onclick="sendCmd('\${data.name}','satoshi_teleport')" title="Satoshi Teleport → Lumbridge (free)">⚡</button>
           <button class="cmd-btn" onclick="sendCmd('\${data.name}','yews')" title="Walk to Edgeville yews">🌲</button>
           <button class="cmd-btn" onclick="sendCmd('\${data.name}','willows')" title="Walk to Draynor willows">🪵</button>
           <button class="cmd-btn" onclick="sendCmd('\${data.name}','cows')" title="Walk to cow field">🐄</button>
