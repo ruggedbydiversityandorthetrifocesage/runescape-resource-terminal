@@ -105,6 +105,7 @@ type Job =
     | 'combat_moss_giants'  // Combat — Moss Giants (Varrock Sewers, power fight)
     | 'mining_runite'       // Mining — Runite ore (Wilderness Lava Maze)
     | 'wc_lumbridge'        // Willow trees — Lumbridge (east of general store, banks at Satoshi)
+    | 'thieving_lumbridge'  // Pickpocket men/women — Lumbridge castle, banks at Satoshi
     | 'free_will';          // AI decides — equip gear, fight, mine, woodcut, bank
 
 // ─── Env loader ───────────────────────────────────────────────────────────────
@@ -179,6 +180,7 @@ function getLoop(b: BotState) {
     if (b.job === 'combat_moss_giants')  return mosGiantLoop;
     if (b.job === 'mining_runite')       return runiteLoop;
     if (b.job === 'wc_lumbridge')        return willowLumbridgeLoop;
+    if (b.job === 'thieving_lumbridge')  return thievingLumbridgeLoop;
     if (b.job === 'free_will')           return freeWillLoop;
     return willowLoop; // 'wc' default
 }
@@ -1329,6 +1331,102 @@ async function willowLumbridgeLoop(b: BotState) {
     addLog(b, 'Bot stopped.');
 }
 
+// ─── Lumbridge Pickpocket (Men/Women) ──────────────────────────────────────
+// Pickpockets men and women inside Lumbridge castle. Banks GP at Satoshi nearby.
+const LUMBRIDGE_CASTLE     = { x: 3222, z: 3218 };
+const GP_BANK_THRESHOLD    = 500; // bank when carrying this much GP
+const STUN_WAIT_TICKS      = 8;   // ~5s stun recovery
+
+async function thievingLumbridgeLoop(b: BotState) {
+    setStatus(b, 'Starting Lumbridge pickpocket...');
+    let successCount = 0;
+    let stunCount    = 0;
+
+    while (b.running) {
+        if (await checkAndRunCmd(b)) continue;
+        const state = b.sdk.getState();
+        if (!state) { await sleep(1000); continue; }
+
+        if (state.dialog?.isOpen) {
+            await b.bot.dismissBlockingUI();
+            continue;
+        }
+
+        // HP safety — if low, eat anything edible in inventory
+        if (state.player.hp > 0 && state.player.hp <= 4) {
+            const food = state.inventory.find(i => i.optionsWithIndex?.some((o: any) => /eat/i.test(o.text)));
+            if (food) {
+                addLog(b, `Low HP (${state.player.hp}) — eating ${food.name}`);
+                await b.sdk.sendUseItem(food.slot);
+                await sleep(600);
+                continue;
+            }
+        }
+
+        // Bank GP if over threshold
+        const coins = state.inventory.find(i => /^coins?$/i.test(i.name));
+        const gp = coins?.count ?? 0;
+        const invFull = state.inventory.length >= 27;
+        if (gp >= GP_BANK_THRESHOLD || invFull) {
+            setStatus(b, `Banking ${gp} GP (trip #${b.bankTrips + 1})...`);
+            try { await b.bot.walkTo(LUMBRIDGE_SATOSHI_BANK.x, LUMBRIDGE_SATOSHI_BANK.z, 2); } catch { /* keep going */ }
+            if (!b.running) break;
+
+            let opened = { success: false, message: '' };
+            for (let attempt = 1; attempt <= 5 && b.running; attempt++) {
+                await sleep(500);
+                try { opened = await b.bot.openBank(); if (opened.success) break; } catch { /* keep going */ }
+                if (attempt === 3) try { await b.bot.walkTo(LUMBRIDGE_SATOSHI_BANK.x, LUMBRIDGE_SATOSHI_BANK.z, 1); } catch { /* keep going */ }
+                await sleep(800);
+            }
+            if (opened.success) {
+                try { await b.bot.depositItem(/^coins?$/i, -1); } catch { /* keep going */ }
+                try { await b.bot.closeBank(); } catch { /* keep going */ }
+                b.bankTrips++;
+                updateProgress(b);
+                setStatus(b, `Banked ${gp} GP (trip #${b.bankTrips}) — back to pickpocketing...`);
+            } else {
+                addLog(b, 'Bank failed — continuing');
+            }
+            try { await b.bot.walkTo(LUMBRIDGE_CASTLE.x, LUMBRIDGE_CASTLE.z, 5); } catch { /* keep going */ }
+            continue;
+        }
+
+        // Walk to castle if drifted
+        const px = state.player.worldX;
+        const pz = state.player.worldZ;
+        if (Math.hypot(px - LUMBRIDGE_CASTLE.x, pz - LUMBRIDGE_CASTLE.z) > MAX_DRIFT) {
+            setStatus(b, 'Walking to Lumbridge castle...');
+            try { await b.bot.walkTo(LUMBRIDGE_CASTLE.x, LUMBRIDGE_CASTLE.z, 5); } catch { /* keep going */ }
+            continue;
+        }
+
+        // Find man or woman to pickpocket
+        const target = b.sdk.findNearbyNpc(/^(man|woman)$/i);
+        if (!target) {
+            setStatus(b, 'No target nearby — searching...');
+            await sleep(800);
+            continue;
+        }
+
+        setStatus(b, `Pickpocketing ${target.name} — ${successCount} success / ${stunCount} stuns`);
+        const result = await b.bot.pickpocketNpc(target);
+
+        if (result.success) {
+            successCount++;
+            updateProgress(b);
+        } else {
+            stunCount++;
+            // Stun: wait for recovery before retrying
+            addLog(b, `Stunned! Waiting recovery... (stun #${stunCount})`);
+            await b.sdk.waitForTicks(STUN_WAIT_TICKS);
+        }
+    }
+
+    setStatus(b, 'idle');
+    addLog(b, 'Bot stopped.');
+}
+
 // ─── Long-distance walk helper ─────────────────────────────────────────────
 // Uses 50-tile hops with b.running checks between each — Stop takes effect fast.
 async function walkToLong(b: BotState, destX: number, destZ: number): Promise<void> {
@@ -1621,6 +1719,22 @@ async function miningVarrockEastLoop(b: BotState) {
         // ── BANK ─────────────────────────────────────────────────────────────
         if (invFull || oreCount >= 24) {
             setStatus(b, `Full (${oreCount} ore) — banking at Varrock West...`);
+
+            // Exit any building the bot wandered into while mining (e.g. fancy dress shop).
+            // Rocks near z~3390+ are inside/adjacent to buildings — open the door and get out.
+            const buildDoor = b.sdk.getState()?.nearbyLocs.find(
+                l => /^door$/i.test(l.name) && l.distance <= 6
+            );
+            if (buildDoor) {
+                addLog(b, `Exiting building via door at (${buildDoor.x},${buildDoor.z})...`);
+                try { await b.bot.openDoor(buildDoor); await sleep(600); } catch { /* keep going */ }
+                // Walk south away from building to open ground
+                try { await b.sdk.sendWalk(buildDoor.x + 2, buildDoor.z - 4, true); await sleep(1200); } catch { /* keep going */ }
+            }
+
+            // Normalize to a safe start position south of all buildings before bank route
+            try { await b.bot.walkTo(3290, 3370, 5); } catch { /* keep going */ }
+            await sleep(300);
 
             // Pre-step: approach the SE Varrock gate and open it before waypoint walking.
             // The gate at ~(3273,3380) is ~19 tiles from the mine start, too far for the
@@ -2685,7 +2799,7 @@ if (botArgs.length === 0) {
 
 for (const arg of botArgs) {
     const [name, jobRaw = 'wc'] = arg.split(':');
-    const validJobs: Job[] = ['wc', 'wc_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
+    const validJobs: Job[] = ['wc', 'wc_lumbridge', 'thieving_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
     // Legacy aliases
     const jobAliases: Record<string, Job> = { mining: 'mining_all', combat: 'combat_cows' };
     const job = (validJobs.includes(jobRaw as Job) ? jobRaw : jobAliases[jobRaw] ?? 'wc') as Job;
@@ -2804,7 +2918,7 @@ Bun.serve({
         if (req.method === 'POST' && url.pathname === '/setjob') {
             const { name, job } = await req.json() as { name: string; job: Job };
             const b = bots.get(name);
-            const validJobs: Job[] = ['wc', 'wc_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
+            const validJobs: Job[] = ['wc', 'wc_lumbridge', 'thieving_lumbridge', 'yews', 'yews_varrock', 'mining_all', 'mining_coal', 'mining_mithril', 'mining_varrock_east', 'mining_varrock_west', 'mining_essence', 'combat_cows', 'combat_chickens', 'combat_goblins', 'combat_al_kharid', 'fishing_draynor', 'fishing_barb', 'combat_moss_giants', 'mining_runite', 'free_will'];
             if (b && validJobs.includes(job)) {
                 const wasRunning = b.running;
                 b.job = job;
@@ -3093,6 +3207,7 @@ header h1 { color: var(--gold); font-size: 0.9em; letter-spacing: 1px; white-spa
 const JOBS = [
   { value: 'wc',                  label: '🪓 Willows (Draynor)' },
   { value: 'wc_lumbridge',        label: '🪓 Willows (Lumbridge)' },
+  { value: 'thieving_lumbridge',  label: '🎭 Pickpocket – Men/Women (Lumbridge)' },
   { value: 'yews',                label: '🌲 Yews (Edgeville)' },
   { value: 'yews_varrock',        label: '🌲 Yews (Varrock Castle)' },
   { value: 'mining_all',          label: '⛏ Mining – Guild (All)' },
